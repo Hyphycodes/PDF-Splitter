@@ -5,10 +5,6 @@ import type {
   OutputGroup,
 } from "./types";
 
-function crosswalkLine(r: PayItemCrosswalk): string {
-  return `${r.pay_item}  ${r.pay_item_description}  -> ${r.material_code ?? "NULL"}  [${r.source}]`;
-}
-
 function materialLine(m: MaterialMaster): string {
   return `${m.material_code}  ${m.description}  (${m.uom}, ${m.method_of_acceptance})`;
 }
@@ -18,26 +14,6 @@ function notesBlock(notes: ResearchNote[]): string {
   return (
     "\nLEARNED NOTES (confirmed by the inspector previously — weigh heavily):\n" +
     notes.map((n) => `- [${n.scope} ${n.ref}] ${n.note}`).join("\n")
-  );
-}
-
-/** Context for general Q&A: the whole master data is small enough to include. */
-export function buildGeneralContext(
-  crosswalk: PayItemCrosswalk[],
-  materials: MaterialMaster[],
-  notes: ResearchNote[],
-  focusRefs: string[] = []
-): string {
-  const focus = focusRefs.length
-    ? `\nThe inspector is focused on: ${focusRefs.join(", ")}.\n`
-    : "";
-  return (
-    focus +
-    "PAY-ITEM CROSSWALK (pay_item, description, material_code, source):\n" +
-    crosswalk.map(crosswalkLine).join("\n") +
-    "\n\nMATERIAL MASTER (code, description, uom, acceptance):\n" +
-    materials.map(materialLine).join("\n") +
-    notesBlock(notes)
   );
 }
 

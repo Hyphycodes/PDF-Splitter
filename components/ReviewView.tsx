@@ -18,6 +18,9 @@ import { renderPageJpeg } from "@/lib/pdf";
 import { runResearch, saveReferenceFromSource } from "@/lib/researchClient";
 import PdfViewer from "./PdfViewer";
 import PageLightbox from "./PageLightbox";
+import ResearchPanel from "./ResearchPanel";
+import PageManager from "./PageManager";
+import AllPagesGrid from "./AllPagesGrid";
 import {
   CheckIcon,
   CopyIcon,
@@ -29,11 +32,7 @@ import {
   SparkIcon,
   GavelIcon,
   PlusIcon,
-  GlobeIcon,
-  LinkIcon,
-  SearchIcon,
   TrashIcon,
-  ChatIcon,
   GridIcon,
   FileIcon,
 } from "./Icons";
@@ -435,9 +434,19 @@ export default function ReviewView({
   }
 
   const confirmedCount = groups.filter((g) => g.status === "confirmed").length;
-  const viewerIndexes = selected
-    ? [...(result.coverIndex !== null ? [result.coverIndex] : []), ...selected.pageIndexes.filter((i) => i !== result.coverIndex)]
-    : [];
+  // Memoized so the inline PDF preview doesn't fully re-render on every keystroke.
+  const viewerKey = selected ? `${selected.id}:${selected.pageIndexes.join(",")}` : "";
+  const viewerIndexes = useMemo(
+    () =>
+      selected
+        ? [
+            ...(result.coverIndex !== null ? [result.coverIndex] : []),
+            ...selected.pageIndexes.filter((i) => i !== result.coverIndex),
+          ]
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [viewerKey, result.coverIndex]
+  );
 
   return (
     <div className="flex h-[calc(100vh-57px)] flex-col">
@@ -1052,209 +1061,6 @@ function CorrectInput({
   );
 }
 
-const VERDICT_STYLE: Record<string, { chip: string; label: string }> = {
-  match: { chip: "bg-emerald-50 text-emerald-700", label: "Matches" },
-  mismatch: { chip: "bg-rose-50 text-rose-700", label: "Possible mismatch" },
-  unclear: { chip: "bg-amber-50 text-amber-700", label: "Unclear" },
-};
-
-function ResearchPanel({
-  group,
-  keyAvailable,
-  savedRefs,
-  onRun,
-  onApplyCode,
-  onSaveRef,
-  onDiscuss,
-}: {
-  group: OutputGroup;
-  keyAvailable: boolean;
-  savedRefs: Set<string>;
-  onRun: () => void;
-  onApplyCode: (code: string) => void;
-  onSaveRef: (src: ResearchSource) => void;
-  onDiscuss: () => void;
-}) {
-  const r = group.research;
-  const v = r?.verdict ? VERDICT_STYLE[r.verdict] : null;
-  return (
-    <div className="card mb-4 p-4">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <GlobeIcon width={16} height={16} className="text-brand-600" /> Research
-          {v && <span className={`chip ${v.chip}`}>{v.label}</span>}
-        </div>
-        <div className="flex gap-2">
-          <button
-            className="btn-subtle px-3 py-1.5 text-xs"
-            disabled={!keyAvailable}
-            onClick={onDiscuss}
-            title="Chat with Claude about these findings right now"
-          >
-            <ChatIcon width={14} height={14} /> Discuss
-          </button>
-          <button
-            className="btn-subtle px-3 py-1.5 text-xs"
-            disabled={!keyAvailable || r?.status === "pending"}
-            onClick={onRun}
-            title={keyAvailable ? "Verify against the cert + manufacturer datasheet" : "Link an API key to use research"}
-          >
-            <SearchIcon width={14} height={14} />
-            {r?.status === "pending" ? "Researching…" : r ? "Re-research" : "Research this material"}
-          </button>
-        </div>
-      </div>
-
-      {!r && (
-        <p className="text-xs text-ink-faint">
-          Checks the pay-item description against the cert and the manufacturer’s datasheet (found online),
-          and flags any disagreement — e.g. a “2C” description whose datasheet shows a single conductor.
-        </p>
-      )}
-
-      {r?.status === "pending" && (
-        <div className="flex items-center gap-2 text-xs text-ink-faint">
-          <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600" />
-          Reading the certs and searching manufacturer datasheets…
-        </div>
-      )}
-
-      {r?.status === "error" && (
-        <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{r.error}</div>
-      )}
-
-      {r?.status === "done" && (
-        <div className="space-y-3">
-          {r.summary && <p className="text-sm text-ink-soft">{r.summary}</p>}
-
-          {r.suggestedCode && r.suggestedCode !== group.materialCode && (
-            <div className="flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50/60 p-2.5">
-              <SparkIcon width={14} height={14} className="text-brand-600" />
-              <span className="text-xs text-ink-soft">
-                Research suggests material code <b>{r.suggestedCode}</b> (currently {group.materialCode ?? "none"}).
-              </span>
-              <button
-                className="ml-auto rounded-md bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"
-                onClick={() => onApplyCode(r.suggestedCode!)}
-              >
-                Apply &amp; remember
-              </button>
-            </div>
-          )}
-
-          {r.sources && r.sources.length > 0 && (
-            <div>
-              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-                Manufacturer sources
-              </div>
-              <div className="space-y-1.5">
-                {r.sources.map((s) => (
-                  <div key={s.url} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2">
-                    <LinkIcon width={13} height={13} className="shrink-0 text-ink-faint" />
-                    <a
-                      href={s.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="min-w-0 flex-1 truncate text-xs text-brand-700 hover:underline"
-                      title={s.url}
-                    >
-                      {s.title}
-                      {s.isPdf && <span className="ml-1 rounded bg-rose-100 px-1 text-[9px] font-semibold text-rose-700">PDF</span>}
-                    </a>
-                    {savedRefs.has(s.url) ? (
-                      <span className="chip bg-emerald-50 text-emerald-700">
-                        <CheckIcon width={11} height={11} /> saved
-                      </span>
-                    ) : (
-                      <button
-                        className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-brand-600 hover:text-white"
-                        onClick={() => onSaveRef(s)}
-                      >
-                        Save to references
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PageManager({
-  groupName,
-  pages,
-  assignedHere,
-  assignedElsewhere,
-  onToggle,
-  onView,
-  onClose,
-}: {
-  groupName: string;
-  pages: { index: number; pageNumber: number; thumbnail?: string; payItems: string[] }[];
-  assignedHere: Set<number>;
-  assignedElsewhere: (idx: number) => boolean;
-  onToggle: (idx: number, on: boolean) => void;
-  onView: (idx: number) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-float" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
-          <div>
-            <div className="text-sm font-semibold text-ink">Add / edit pages</div>
-            <div className="truncate font-mono text-xs text-ink-faint">{groupName}</div>
-          </div>
-          <button onClick={onClose} className="btn-primary px-3 py-1.5 text-xs">
-            Done
-          </button>
-        </div>
-        <p className="border-b border-slate-100 px-5 py-2 text-xs text-ink-faint">
-          Check a page to add it to this file. Adding a page moves it here and removes it from any other file.
-          Click a page to view it full-size.
-        </p>
-        <div className="grid grid-cols-3 gap-3 overflow-y-auto p-4 sm:grid-cols-4 md:grid-cols-5">
-          {pages.map((p) => {
-            const here = assignedHere.has(p.index);
-            const elsewhere = !here && assignedElsewhere(p.index);
-            return (
-              <div
-                key={p.index}
-                className={`overflow-hidden rounded-lg border-2 transition ${
-                  here ? "border-brand-500 ring-2 ring-brand-200" : elsewhere ? "border-amber-300" : "border-slate-200"
-                }`}
-              >
-                <button onClick={() => onView(p.index)} className="block w-full" title="View full page">
-                  {p.thumbnail && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={p.thumbnail} alt={`page ${p.pageNumber}`} className="h-32 w-full object-cover object-top" />
-                  )}
-                </button>
-                <label className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-[11px]">
-                  <input
-                    type="checkbox"
-                    checked={here}
-                    onChange={(e) => onToggle(p.index, e.target.checked)}
-                    className="h-3.5 w-3.5 accent-brand-600"
-                  />
-                  <span className="font-medium text-ink">p{p.pageNumber}</span>
-                  {elsewhere && <span className="ml-auto text-amber-600">in another file</span>}
-                  {p.payItems.length > 0 && !elsewhere && (
-                    <span className="ml-auto truncate font-mono text-ink-faint">{p.payItems[0]}</span>
-                  )}
-                </label>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function AddPayItemRow({
   options,
@@ -1292,164 +1098,6 @@ function AddPayItemRow({
       >
         Add
       </button>
-    </div>
-  );
-}
-
-/** Big overview of every page with one-tap assignment to a file / pay item. */
-function AllPagesGrid({
-  pages,
-  coverIndex,
-  groups,
-  contract,
-  date,
-  missingPayItems,
-  coverMap,
-  onView,
-  onAssignGroup,
-  onAssignPayItem,
-  onNewFile,
-  onUnassign,
-  onSelectFile,
-}: {
-  pages: { index: number; pageNumber: number; thumbnail?: string; payItems: string[]; isCoverSheet: boolean }[];
-  coverIndex: number | null;
-  groups: OutputGroup[];
-  contract: string;
-  date: string;
-  missingPayItems: string[];
-  coverMap: Map<string, CoverRow>;
-  onView: (idx: number) => void;
-  onAssignGroup: (idx: number, gid: string) => void;
-  onAssignPayItem: (idx: number, pi: string) => void;
-  onNewFile: (idx: number) => void;
-  onUnassign: (idx: number) => void;
-  onSelectFile: (gid: string) => void;
-}) {
-  const groupOfPage = new Map<number, OutputGroup>();
-  for (const g of groups) for (const idx of g.pageIndexes) if (!groupOfPage.has(idx)) groupOfPage.set(idx, g);
-
-  const certPages = pages.filter((p) => !p.isCoverSheet && p.index !== coverIndex);
-  const coverPage = pages.find((p) => p.index === coverIndex);
-
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-5">
-      <div className="mx-auto max-w-7xl">
-        <p className="mb-4 text-sm text-ink-faint">
-          Every page in the packet. The split is done automatically — use this view to eyeball each page big and
-          fix where it lands. Click a page to zoom; use its dropdown to send it to a file or pay item.
-        </p>
-
-        {coverPage && (
-          <div className="mb-5">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">Cover sheet</div>
-            <button
-              onClick={() => onView(coverPage.index)}
-              className="group relative block w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card"
-            >
-              {coverPage.thumbnail && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={coverPage.thumbnail} alt="cover" className="h-56 w-full object-cover object-top" />
-              )}
-              <div className="absolute left-2 top-2 rounded-md bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                Cover · in every file
-              </div>
-            </button>
-          </div>
-        )}
-
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-          Cert pages ({certPages.length})
-        </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {certPages.map((p) => {
-            const g = groupOfPage.get(p.index);
-            return (
-              <div key={p.index} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
-                <button onClick={() => onView(p.index)} className="group relative block w-full" title="Click to view full size">
-                  {p.thumbnail && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={p.thumbnail} alt={`page ${p.pageNumber}`} className="h-72 w-full object-cover object-top transition group-hover:opacity-90" />
-                  )}
-                  <div className="absolute left-2 top-2 rounded-md bg-slate-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur">
-                    Page {p.pageNumber}
-                  </div>
-                  {g ? (
-                    <div className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                      <CheckIcon width={10} height={10} /> assigned
-                    </div>
-                  ) : (
-                    <div className="absolute right-2 top-2 rounded-md bg-rose-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                      unassigned
-                    </div>
-                  )}
-                </button>
-
-                <div className="p-2.5">
-                  <div className="mb-1.5 flex flex-wrap gap-1">
-                    {p.payItems.length ? (
-                      p.payItems.map((pi) => (
-                        <span key={pi} className="chip bg-slate-100 font-mono text-[10px] text-ink-soft">
-                          {pi}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-[11px] text-ink-faint">No pay item read on this page</span>
-                    )}
-                  </div>
-
-                  {g && (
-                    <button
-                      onClick={() => onSelectFile(g.id)}
-                      className="mb-1.5 block w-full truncate text-left font-mono text-[11px] text-brand-700 hover:underline"
-                      title={g.filename}
-                    >
-                      → {g.filename}
-                    </button>
-                  )}
-
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === "__unassign__") onUnassign(p.index);
-                      else if (v === "__new__") onNewFile(p.index);
-                      else if (v.startsWith("pi:")) onAssignPayItem(p.index, v.slice(3));
-                      else if (v) onAssignGroup(p.index, v);
-                    }}
-                    className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[11px] focus:border-brand-400"
-                  >
-                    <option value="">{g ? "Move to…" : "Assign to…"}</option>
-                    {groups.length > 0 && (
-                      <optgroup label="Files">
-                        {groups.map((gr) => (
-                          <option key={gr.id} value={gr.id}>
-                            {gr.payItems.join("-") || gr.filename}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {missingPayItems.length > 0 && (
-                      <optgroup label="Missing pay item (new file)">
-                        {missingPayItems.map((pi) => (
-                          <option key={pi} value={`pi:${pi}`}>
-                            {pi} — {coverMap.get(pi)?.description || ""}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    <option value="__new__">＋ New file from this page</option>
-                    {g && <option value="__unassign__">Unassign</option>}
-                  </select>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-2 text-right text-[11px] text-ink-faint">
-          {contract || "CONTRACT"}_{date || "DATE"}
-        </div>
-      </div>
     </div>
   );
 }

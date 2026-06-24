@@ -203,8 +203,13 @@ export default function ReferenceView({ materials, crosswalk, notes, docs, onDel
                 <LinkIcon width={15} height={15} className="shrink-0 text-ink-faint" />
                 <button
                   onClick={() => {
-                    const href = d.blob ? URL.createObjectURL(d.blob) : d.url;
-                    window.open(href, "_blank", "noopener");
+                    if (d.blob) {
+                      const href = URL.createObjectURL(d.blob);
+                      window.open(href, "_blank", "noopener");
+                      setTimeout(() => URL.revokeObjectURL(href), 60_000);
+                    } else {
+                      window.open(d.url, "_blank", "noopener");
+                    }
                   }}
                   className="min-w-0 flex-1 truncate text-left text-sm text-brand-700 hover:underline"
                   title={d.url}

@@ -58,13 +58,16 @@ export default function ChatPanel({ open, onClose, scope, seed, onApplyProposal 
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Reset when the scope changes (opening a different challenge / general chat).
+  // Keyed on title + refs so two files with the same name don't share a thread.
+  const scopeKey = `${scope?.title ?? ""}::${scope?.refs?.join("|") ?? ""}`;
   useEffect(() => {
     setTurns([]);
     setAttachments([]);
     setScopeSent(false);
     setError("");
     setInput(seed ?? "");
-  }, [scope?.title, seed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey, seed]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
