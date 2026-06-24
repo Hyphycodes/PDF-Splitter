@@ -190,18 +190,35 @@ export default function ReviewView({
 
   function addPayItemRow(groupId: string, payItem: string) {
     if (!payItem) return;
-    update(groupId, (g) => {
-      if (g.payItems.includes(payItem)) return g; // each pay item once per file
-      const payItems = [...g.payItems, payItem].sort((a, b) => orderOf(a) - orderOf(b));
-      return {
-        ...g,
-        payItems,
-        rows: [...g.rows, newRow(payItem)].sort((a, b) => orderOf(a.pay_item) - orderOf(b.pay_item)),
-        filename: fileName(payItems),
-        materialCode: g.materialCode,
-        status: "pending",
-      };
-    });
+    // A pay item belongs to exactly one split — add here, remove from any other.
+    setGroups((gs) =>
+      gs.map((g) => {
+        if (g.id === groupId) {
+          if (g.payItems.includes(payItem)) return g;
+          const payItems = [...g.payItems, payItem].sort((a, b) => orderOf(a) - orderOf(b));
+          return {
+            ...g,
+            payItems,
+            rows: [...g.rows, newRow(payItem)].sort((a, b) => orderOf(a.pay_item) - orderOf(b.pay_item)),
+            filename: fileName(payItems),
+            status: "pending",
+          };
+        }
+        if (g.payItems.includes(payItem)) {
+          const payItems = g.payItems.filter((p) => p !== payItem);
+          const rows = g.rows.filter((r) => r.pay_item !== payItem);
+          return {
+            ...g,
+            payItems,
+            rows,
+            filename: fileName(payItems),
+            materialCode: rows.find((r) => r.material_code)?.material_code ?? null,
+            status: "pending",
+          };
+        }
+        return g;
+      })
+    );
   }
 
   function deletePayItemRow(groupId: string, payItem: string) {
@@ -239,7 +256,11 @@ export default function ReviewView({
 
   // Pay items on the cover that have no cert pages yet (missing certs).
   const usedPayItems = useMemo(() => new Set(groups.flatMap((g) => g.payItems)), [groups]);
+  const coverSet = useMemo(() => new Set(result.coverRows.map((r) => r.pay_item)), [result.coverRows]);
   const missingPayItems = result.coverRows.map((r) => r.pay_item).filter((pi) => !usedPayItems.has(pi));
+  // Pay items read off certs that aren't on the cover — likely OCR misreads of a
+  // missing cover pay item (this is usually why a pay item shows "missing").
+  const unrecognizedPayItems = [...usedPayItems].filter((pi) => !coverSet.has(pi));
 
   function createGroupForPayItem(payItem: string, idx: number) {
     const newGroup: OutputGroup = {
@@ -470,7 +491,22 @@ export default function ReviewView({
               </div>
               <div className="mt-1 font-mono text-[11px] leading-relaxed">{missingPayItems.join(", ")}</div>
               <div className="mt-1 text-[11px] text-amber-700">
-                Assign an uncategorized page below to one of these instead of making a new file.
+                {unassigned.length > 0
+                  ? "Assign an uncategorized page below to one of these instead of making a new file."
+                  : unrecognizedPayItems.length > 0
+                    ? "No loose pages — these were likely read under a wrong number (see below). Open that split, delete the wrong pay-item row, and add the correct one."
+                    : "No cert pages were found for these in the packet. Add the pay item to the right file once you locate its cert."}
+              </div>
+            </div>
+          )}
+          {unrecognizedPayItems.length > 0 && (
+            <div className="mb-2 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
+              <div className="flex items-center gap-1.5 font-semibold">
+                <AlertIcon width={13} height={13} /> {unrecognizedPayItems.length} pay item{unrecognizedPayItems.length > 1 ? "s aren't" : " isn't"} on the cover
+              </div>
+              <div className="mt-1 font-mono text-[11px] leading-relaxed">{unrecognizedPayItems.join(", ")}</div>
+              <div className="mt-1 text-[11px] text-rose-600">
+                Probably a misread of a missing pay item above — open the file, fix the pay-item row.
               </div>
             </div>
           )}
@@ -679,7 +715,14 @@ export default function ReviewView({
                               ))}
                             </select>
                           </td>
-                          <td className="px-4 py-3 font-mono text-ink-soft">{row.pay_item}</td>
+                          <td className="px-4 py-3 font-mono text-ink-soft">
+                            {row.pay_item}
+                            {!coverSet.has(row.pay_item) && (
+                              <div className="mt-1 inline-flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">
+                                <AlertIcon width={10} height={10} /> not on cover
+                              </div>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-ink-soft">
                             {row.description || <span className="text-slate-400">—</span>}
                             {/* Suggestion / flag affordances */}

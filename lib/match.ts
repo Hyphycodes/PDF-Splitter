@@ -83,10 +83,10 @@ export function buildGroupRow(
 }
 
 /**
- * Group cert pages by the PAY-ITEM BOX. Pages that carry the same set of pay
- * items belong to the same cert and go into one output file — including
- * multi-page certs that repeat the box, and certs whose box lists several pay
- * items. Every such pay item is named in the file and listed at the top.
+ * Group cert pages into splits using the PAY-ITEM BOX, with union-find so that
+ * any pages sharing a pay item collapse into ONE split. Each pay item therefore
+ * belongs to exactly one split, while a split may carry several pay items
+ * (a cert whose box lists several, and multi-page certs that repeat the box).
  */
 export function matchAndGroup(input: MatchInput): OutputGroup[] {
   const { pages, coverRows, coverIndex, coverOrder, crosswalk, materials, contract, date, research } = input;
@@ -97,23 +97,49 @@ export function matchAndGroup(input: MatchInput): OutputGroup[] {
     (p) => !p.isCoverSheet && p.index !== coverIndex && p.payItems.length > 0
   );
 
-  // Group key = the sorted set of pay items appearing on the page.
-  const groups = new Map<string, { payItems: string[]; pageIndexes: Set<number> }>();
-  for (const page of certPages) {
-    const set = [...new Set(page.payItems)].sort((a, b) => orderOf(a) - orderOf(b));
-    const key = set.join("+");
-    let g = groups.get(key);
-    if (!g) {
-      g = { payItems: set, pageIndexes: new Set() };
-      groups.set(key, g);
+  // Union-find over pay items: pay items that appear together on any page merge.
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    if (!parent.has(x)) parent.set(x, x);
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) {
+      const next = parent.get(x)!;
+      parent.set(x, r);
+      x = next;
     }
+    return r;
+  };
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  for (const page of certPages) {
+    const items = [...new Set(page.payItems)];
+    items.forEach((pi) => find(pi)); // register
+    for (let i = 1; i < items.length; i++) union(items[0], items[i]);
+  }
+
+  // Collect pages + pay items per connected component.
+  const comp = new Map<string, { payItems: Set<string>; pageIndexes: Set<number> }>();
+  for (const page of certPages) {
+    const root = find(page.payItems[0]);
+    let g = comp.get(root);
+    if (!g) {
+      g = { payItems: new Set(), pageIndexes: new Set() };
+      comp.set(root, g);
+    }
+    page.payItems.forEach((pi) => g!.payItems.add(pi));
     g.pageIndexes.add(page.index);
   }
 
   const result: OutputGroup[] = [];
   let i = 0;
-  for (const [, g] of groups) {
-    const rows = g.payItems.map((pi) => buildGroupRow(pi, coverByPayItem, crosswalk, materials, research));
+  for (const [, g] of comp) {
+    const payItems = [...g.payItems].sort((a, b) => orderOf(a) - orderOf(b));
+    const rows = payItems.map((pi) => buildGroupRow(pi, coverByPayItem, crosswalk, materials, research));
     const primaryCode = rows.find((r) => r.material_code)?.material_code ?? null;
     const material = primaryCode ? materials.get(primaryCode) : undefined;
 
@@ -121,10 +147,10 @@ export function matchAndGroup(input: MatchInput): OutputGroup[] {
       id: `g${i++}`,
       materialCode: primaryCode,
       materialDescription:
-        material?.description || (g.payItems.length > 1 ? `${g.payItems.length} pay items` : "Material"),
-      payItems: g.payItems,
+        material?.description || (payItems.length > 1 ? `${payItems.length} pay items` : "Material"),
+      payItems,
       pageIndexes: [...g.pageIndexes].sort((a, b) => a - b),
-      filename: autoName(contract, date, g.payItems),
+      filename: autoName(contract, date, payItems),
       status: "pending",
       rows,
     });
