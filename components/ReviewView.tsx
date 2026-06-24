@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { OutputGroup, PipelineResult, MaterialMaster } from "@/lib/types";
 import { buildGroupPdf, downloadBytes } from "@/lib/build";
@@ -15,6 +15,7 @@ import {
   ArrowLeftIcon,
   PageIcon,
   SparkIcon,
+  GavelIcon,
 } from "./Icons";
 
 interface Props {
@@ -23,14 +24,36 @@ interface Props {
   sourceBytes: ArrayBuffer;
   materials: MaterialMaster[];
   onReset: () => void;
+  onChallenge: (group: OutputGroup) => void;
+  onGroupsChange?: (groups: OutputGroup[]) => void;
 }
 
-export default function ReviewView({ result, doc, sourceBytes, materials, onReset }: Props) {
+export default function ReviewView({
+  result,
+  doc,
+  sourceBytes,
+  materials,
+  onReset,
+  onChallenge,
+  onGroupsChange,
+}: Props) {
   const [groups, setGroups] = useState<OutputGroup[]>(result.groups);
   const [selectedId, setSelectedId] = useState<string>(result.groups[0]?.id ?? "");
   const [copied, setCopied] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
   const [correcting, setCorrecting] = useState<string | null>(null);
+
+  // Reset local state when a different inspection is opened.
+  useEffect(() => {
+    setGroups(result.groups);
+    setSelectedId(result.groups[0]?.id ?? "");
+  }, [result]);
+
+  // Lift group changes for persistence (debounced by the parent).
+  useEffect(() => {
+    onGroupsChange?.(groups);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups]);
 
   const materialMap = useMemo(() => new Map(materials.map((m) => [m.material_code, m])), [materials]);
   const selected = groups.find((g) => g.id === selectedId) ?? null;
@@ -254,6 +277,13 @@ export default function ReviewView({ result, doc, sourceBytes, materials, onRese
                   />
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    className="btn-ghost border-amber-200 text-amber-700 hover:bg-amber-50"
+                    onClick={() => onChallenge(selected)}
+                    title="Ask Claude to check this split against the cert pages + your references"
+                  >
+                    <GavelIcon width={16} height={16} /> Challenge
+                  </button>
                   <button className="btn-ghost" disabled={building} onClick={() => downloadOne(selected)}>
                     <DownloadIcon width={16} height={16} /> Download
                   </button>

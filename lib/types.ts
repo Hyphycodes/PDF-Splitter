@@ -79,3 +79,54 @@ export interface PipelineResult {
   pages: CertPage[];
   groups: OutputGroup[];
 }
+
+// ---- Saved inspections (history) ------------------------------------------
+
+export interface Inspection {
+  id: string;
+  name: string;
+  contract: string;
+  date: string; // packet date (MMDDYY-ish, as read)
+  created_at: number;
+  updated_at: number;
+  pageCount: number;
+  fileCount: number;
+  confirmedCount: number;
+  /** original packet bytes, stored locally so the run can be fully reopened */
+  pdf: Blob;
+  /** reviewed state — pages carry no thumbnails (regenerated on open) */
+  result: PipelineResult;
+}
+
+// ---- Research memory (learning over time) ----------------------------------
+
+export type ResearchScope = "payitem" | "material" | "cert";
+
+export interface ResearchNote {
+  /** composite key, e.g. "payitem:87301805" or "material:30115" */
+  key: string;
+  scope: ResearchScope;
+  ref: string; // the pay item / material code / cert id
+  note: string;
+  confirmed: boolean;
+  updated_at: number;
+}
+
+// ---- Chat / challenge ------------------------------------------------------
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface Proposal {
+  type: "crosswalk" | "note";
+  pay_item?: string;
+  material_code?: string | null;
+  pay_item_description?: string;
+  scope?: ResearchScope;
+  ref?: string;
+  note?: string;
+  rationale?: string;
+}
+

@@ -1,10 +1,15 @@
 import { openDB, type IDBPDatabase } from "idb";
-import type { MaterialMaster, PayItemCrosswalk } from "./types";
+import type {
+  MaterialMaster,
+  PayItemCrosswalk,
+  Inspection,
+  ResearchNote,
+} from "./types";
 import { MATERIAL_MASTER_SEED } from "./material-master-seed";
 import { CROSSWALK_SEED } from "./crosswalk-seed";
 
 const DB_NAME = "cert-splitter";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -23,6 +28,13 @@ function getDB() {
         }
         if (!db.objectStoreNames.contains("meta")) {
           db.createObjectStore("meta", { keyPath: "key" });
+        }
+        if (!db.objectStoreNames.contains("inspections")) {
+          const store = db.createObjectStore("inspections", { keyPath: "id" });
+          store.createIndex("updated_at", "updated_at");
+        }
+        if (!db.objectStoreNames.contains("research_notes")) {
+          db.createObjectStore("research_notes", { keyPath: "key" });
         }
       },
     });
@@ -82,6 +94,54 @@ export async function getCrosswalkMap(): Promise<Map<string, PayItemCrosswalk>> 
 export async function getMaterialMap(): Promise<Map<string, MaterialMaster>> {
   const rows = await getAllMaterials();
   return new Map(rows.map((r) => [r.material_code, r]));
+}
+
+// ---- Inspections (saved runs) ---------------------------------------------
+
+export async function saveInspection(insp: Inspection): Promise<void> {
+  const db = await getDB();
+  await db.put("inspections", insp);
+}
+
+export async function getAllInspections(): Promise<Inspection[]> {
+  const db = await getDB();
+  const rows = (await db.getAll("inspections")) as Inspection[];
+  return rows.sort((a, b) => b.updated_at - a.updated_at);
+}
+
+export async function getInspection(id: string): Promise<Inspection | undefined> {
+  const db = await getDB();
+  return db.get("inspections", id) as Promise<Inspection | undefined>;
+}
+
+export async function deleteInspection(id: string): Promise<void> {
+  const db = await getDB();
+  await db.delete("inspections", id);
+}
+
+// ---- Research notes (memory that sharpens over time) -----------------------
+
+export async function upsertResearchNote(note: ResearchNote): Promise<void> {
+  const db = await getDB();
+  await db.put("research_notes", { ...note, updated_at: Date.now() });
+}
+
+export async function getResearchNote(key: string): Promise<ResearchNote | undefined> {
+  const db = await getDB();
+  return db.get("research_notes", key) as Promise<ResearchNote | undefined>;
+}
+
+export async function getAllResearchNotes(): Promise<ResearchNote[]> {
+  const db = await getDB();
+  const rows = (await db.getAll("research_notes")) as ResearchNote[];
+  return rows.sort((a, b) => b.updated_at - a.updated_at);
+}
+
+/** Pull notes relevant to a set of pay items / material codes for chat context. */
+export async function getRelevantNotes(refs: string[]): Promise<ResearchNote[]> {
+  const all = await getAllResearchNotes();
+  const set = new Set(refs);
+  return all.filter((n) => set.has(n.ref));
 }
 
 /** Wipe and re-seed — useful for development / "reset data". */

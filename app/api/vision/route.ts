@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 // Only a single page image is ever forwarded.
 
 const MODEL = "claude-sonnet-4-6";
-const ENDPOINT = "https://api.anthropic.com/v1/messages";
+const ENDPOINT = `${process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com"}/v1/messages`;
 
 function dataUrlToParts(dataUrl: string): { media_type: string; data: string } | null {
   const m = dataUrl.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   }
 
-  const { apiKey, image } = body;
+  const { image } = body;
+  const apiKey = process.env.ANTHROPIC_API_KEY || body.apiKey;
   if (!apiKey) return NextResponse.json({ error: "missing api key" }, { status: 401 });
   if (!image) return NextResponse.json({ error: "missing image" }, { status: 400 });
 

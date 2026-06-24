@@ -59,3 +59,42 @@ export async function renderPage(
   await page.render({ canvasContext: ctx, viewport }).promise;
   return canvas.toDataURL("image/png");
 }
+
+/** Render a page as JPEG (smaller payload for vision calls). */
+export async function renderPageJpeg(
+  doc: pdfjsLib.PDFDocumentProxy,
+  pageNumber: number,
+  targetWidth: number,
+  quality = 0.7
+): Promise<string> {
+  const png = await renderPage(doc, pageNumber, targetWidth);
+  // Re-encode through a canvas to JPEG.
+  const img = new Image();
+  await new Promise<void>((res, rej) => {
+    img.onload = () => res();
+    img.onerror = () => rej(new Error("image decode failed"));
+    img.src = png;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return png;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+/** Extract the whole text layer of a document, up to a character budget. */
+export async function extractDocText(
+  doc: pdfjsLib.PDFDocumentProxy,
+  maxChars = 24000
+): Promise<string> {
+  let out = "";
+  for (let p = 1; p <= doc.numPages && out.length < maxChars; p++) {
+    const { text } = await extractPageText(doc, p);
+    if (text) out += `\n[p${p}] ${text}`;
+  }
+  return out.slice(0, maxChars).trim();
+}

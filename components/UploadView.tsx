@@ -10,6 +10,7 @@ interface Props {
   setUseVision: (v: boolean) => void;
   apiKey: string;
   setApiKey: (v: string) => void;
+  serverKey: boolean;
   onRun: (file: File) => void;
 }
 
@@ -20,8 +21,10 @@ export default function UploadView({
   setUseVision,
   apiKey,
   setApiKey,
+  serverKey,
   onRun,
 }: Props) {
+  const keyReady = serverKey || !!apiKey;
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -96,7 +99,7 @@ export default function UploadView({
           checked={useVision}
           onChange={setUseVision}
         />
-        {useVision && (
+        {useVision && !serverKey && (
           <div className="px-5 py-4">
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-faint">
               Anthropic API key
@@ -113,16 +116,21 @@ export default function UploadView({
             </p>
           </div>
         )}
+        {useVision && serverKey && (
+          <div className="px-5 py-3 text-xs text-emerald-700">
+            Anthropic API is linked on this deployment — no key needed.
+          </div>
+        )}
       </div>
 
       <button
         className="btn-primary mt-6 w-full py-3 text-base"
-        disabled={!file || (useVision && !apiKey)}
+        disabled={!file || (useVision && !keyReady)}
         onClick={() => file && onRun(file)}
       >
         Split packet
       </button>
-      {useVision && !apiKey && (
+      {useVision && !keyReady && (
         <p className="mt-2 text-center text-xs text-amber-600">
           Add an API key, or turn off OCR to run fully local.
         </p>

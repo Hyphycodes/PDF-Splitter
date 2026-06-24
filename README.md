@@ -79,6 +79,13 @@ cross-device sync is wanted — note that moves master data to the cloud).
   (contract 62P93). It sharpens over time: every accept/correct in the review UI
   upgrades a row to `confirmed`.
 
+Two more stores hold per-machine working data, also local-only:
+
+- **`inspections`** — each saved run: project, date, the original packet PDF (Blob),
+  and the reviewed result. Powers the History tab.
+- **`research_notes`** — confirmed findings keyed by pay item / material code / cert,
+  surfaced back to Claude as context so it sharpens over time.
+
 Seeding is automatic on first load and idempotent.
 
 ### Re-importing the full material master
@@ -90,6 +97,29 @@ node scripts/import-master.mjs path/to/Manual_for_Materials_Inspection_Electrica
 ```
 
 ---
+
+## Master reference, history & chat
+
+- **Reference tab** — a searchable master database of every pay item (→ material
+  code, description, source) and every material (code, description, group, UOM,
+  acceptance). Click any code to copy. Reachable from the top nav at any time —
+  before, during, or after a split. Each pay item has an **Ask** button that opens
+  Claude with that item in context.
+- **History tab** — every split is saved locally as one **inspection** (project +
+  date + the original packet PDF, all in IndexedDB). Reopen any inspection to
+  re-view the files, quantities, and matches; edits you confirm are written back to
+  that record. Nothing leaves the machine.
+- **Ask Claude** — a chat panel (top-right) for questions about any pay item,
+  material code, or cert. Attach extra **reference PDFs** to help Claude reason;
+  those attachments are used **only as prompt context** and are never added to any
+  output file.
+- **Challenge a split** — every generated file has a **Challenge** button. It sends
+  Claude the *actual cert pages in that file* (rendered images) plus your reference
+  attachments, and asks whether the material code and the included pages are right.
+- **Confirm & remember** — when Claude proposes a fix (a material-code change or a
+  note), you confirm it. The crosswalk row is upgraded to `confirmed` and a research
+  note is stored, so the next time that cert / pay item / material code shows up,
+  the tool already knows. This is the learning loop.
 
 ## Review UI
 
@@ -131,9 +161,22 @@ npm run dev      # http://localhost:3000
 npm run build && npm start   # production
 ```
 
-Deploys to Vercel as-is. To use OCR for scanned pages, open the upload screen,
-turn on **OCR scanned pages with Claude**, and paste an Anthropic API key (stored
-only in your browser's localStorage).
+### Anthropic API key
+
+The OCR, chat, challenge, and research features call the Anthropic API. There are
+two ways to supply a key:
+
+- **Linked on the deployment (recommended):** set `ANTHROPIC_API_KEY` as an
+  environment variable (e.g. in Vercel project settings). The app detects it via
+  `/api/config` and just works — no key entry in the UI.
+- **Per-browser:** if no server key is linked, turn on OCR and paste a key in the
+  upload screen; it's stored only in your browser's localStorage.
+
+Optional: `ANTHROPIC_BASE_URL` overrides the API base (defaults to
+`https://api.anthropic.com`).
+
+Models: chat / challenge / research use `claude-opus-4-8`; image-only OCR uses
+`claude-sonnet-4-6`.
 
 ---
 
