@@ -1,13 +1,12 @@
 "use client";
 
-import { ShieldIcon, SplitIcon, DatabaseIcon, HistoryIcon, ChatIcon } from "./Icons";
+import { ShieldIcon, SplitIcon, DatabaseIcon, HistoryIcon } from "./Icons";
 
 export type View = "split" | "reference" | "history";
 
 interface Props {
   view: View;
   setView: (v: View) => void;
-  onOpenChat: () => void;
   materialCount: number;
   inspectionCount: number;
 }
@@ -18,7 +17,7 @@ const TABS: { key: View; label: string; icon: React.ReactNode }[] = [
   { key: "history", label: "History", icon: <HistoryIcon width={16} height={16} /> },
 ];
 
-export default function NavBar({ view, setView, onOpenChat, materialCount, inspectionCount }: Props) {
+export default function NavBar({ view, setView, materialCount, inspectionCount }: Props) {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-5">
@@ -56,10 +55,6 @@ export default function NavBar({ view, setView, onOpenChat, materialCount, inspe
 
         <div className="flex items-center gap-3">
           <span className="hidden text-xs text-ink-faint md:inline">{materialCount} materials</span>
-          <button onClick={onOpenChat} className="btn-primary px-3 py-2">
-            <ChatIcon width={16} height={16} />
-            <span className="hidden sm:inline">Ask Claude</span>
-          </button>
         </div>
       </div>
     </header>

@@ -21,7 +21,7 @@ import { loadPdf, renderPage, renderPageJpeg } from "@/lib/pdf";
 import { runPipeline, type ProgressEvent } from "@/lib/pipeline";
 import { getApiKey, setApiKey as persistApiKey } from "@/lib/vision";
 import { hasServerKey } from "@/lib/chatClient";
-import { buildGeneralContext, buildGroupContext } from "@/lib/context";
+import { buildGroupContext } from "@/lib/context";
 import type {
   MaterialMaster,
   PayItemCrosswalk,
@@ -66,12 +66,16 @@ export default function AppShell() {
   const [apiKey, setApiKey] = useState("");
   const [serverKey, setServerKey] = useState(false);
 
-  // Chat
+  // Project save state
+  const [projectName, setProjectName] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+
+  // Challenge chat (scoped to one split only)
   const [chatOpen, setChatOpen] = useState(false);
   const [chatScope, setChatScope] = useState<ChatScope | null>(null);
-  const [chatSeed, setChatSeed] = useState<string | undefined>(undefined);
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestGroups = useRef<OutputGroup[] | null>(null);
 
   const refreshData = useCallback(async () => {
     const [m, c, n, i] = await Promise.all([
@@ -119,8 +123,11 @@ export default function AppShell() {
       setResult(res);
       setStage("review");
 
-      const insp = await persistInspection(res, res.groups, keep, file.name, null);
+      const defaultName = `${res.contract || "Packet"}_${res.date || ""}`.replace(/_$/, "");
+      setProjectName(defaultName);
+      const insp = await persistInspection(res, res.groups, keep, defaultName, null);
       setCurrentId(insp.id);
+      setSaveState("saved");
       await refreshData();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -133,7 +140,7 @@ export default function AppShell() {
     res: PipelineResult,
     groups: OutputGroup[],
     bytes: ArrayBuffer,
-    filename: string,
+    name: string,
     id: string | null
   ): Promise<Inspection> {
     // Strip heavy fields (thumbnails, raw text) before storing.
@@ -146,7 +153,7 @@ export default function AppShell() {
     const now = Date.now();
     const insp: Inspection = {
       id: id ?? (crypto.randomUUID ? crypto.randomUUID() : `insp_${now}`),
-      name: existing?.name ?? `${res.contract || "Packet"}${res.date ? ` · ${res.date}` : ""} — ${filename}`,
+      name: name || existing?.name || `${res.contract || "Packet"}_${res.date || ""}`,
       contract: res.contract,
       date: res.date,
       created_at: existing?.created_at ?? now,
@@ -162,13 +169,26 @@ export default function AppShell() {
   }
 
   // Debounced re-save of the open inspection as the inspector edits.
-  function handleGroupsChange(groups: OutputGroup[]) {
+  function scheduleSave(name: string) {
     if (!currentId || !result || !sourceBytes) return;
+    setSaveState("saving");
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(async () => {
-      await persistInspection(result, groups, sourceBytes, "", currentId);
+      const groups = latestGroups.current ?? result.groups;
+      await persistInspection(result, groups, sourceBytes, name, currentId);
+      setSaveState("saved");
       await refreshData();
-    }, 800);
+    }, 600);
+  }
+
+  function handleGroupsChange(groups: OutputGroup[]) {
+    latestGroups.current = groups;
+    scheduleSave(projectName);
+  }
+
+  function renameProject(name: string) {
+    setProjectName(name);
+    scheduleSave(name);
   }
 
   async function openInspection(id: string) {
@@ -189,10 +209,13 @@ export default function AppShell() {
         pages.push({ ...p, thumbnail: await renderPage(loaded.doc, p.index + 1, THUMB_WIDTH) });
       }
       const res: PipelineResult = { ...insp.result, pages };
+      latestGroups.current = res.groups;
       setDoc(loaded.doc);
       setSourceBytes(keep);
       setResult(res);
       setCurrentId(insp.id);
+      setProjectName(insp.name);
+      setSaveState("saved");
       setStage("review");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -206,17 +229,9 @@ export default function AppShell() {
     await refreshData();
   }
 
-  // ---- Chat / challenge --------------------------------------------------
-  function openGeneralChat(seed?: string, refs: string[] = []) {
-    const ctx = buildGeneralContext(crosswalk, materials, notes, refs);
-    setChatScope({ title: "Master reference", contextText: ctx, refs: refs.length ? refs : crosswalk.map((c) => c.pay_item) });
-    setChatSeed(seed);
-    setChatOpen(true);
-  }
-
+  // ---- Per-split challenge (the only chat entry point) -------------------
   async function challengeGroup(group: OutputGroup) {
     if (!doc) return;
-    setChatSeed(undefined);
     // Open immediately with a "preparing" note while we render the page images.
     setChatScope({ title: group.filename, contextText: "Preparing…", refs: [], challenge: true });
     setChatOpen(true);
@@ -284,7 +299,6 @@ export default function AppShell() {
       <NavBar
         view={view}
         setView={setView}
-        onOpenChat={() => openGeneralChat()}
         materialCount={materials.length}
         inspectionCount={inspections.length}
       />
@@ -320,6 +334,10 @@ export default function AppShell() {
           doc={doc}
           sourceBytes={sourceBytes}
           materials={materials}
+          crosswalk={crosswalk}
+          projectName={projectName}
+          onRenameProject={renameProject}
+          saveState={saveState}
           onReset={reset}
           onChallenge={challengeGroup}
           onGroupsChange={handleGroupsChange}
@@ -327,7 +345,7 @@ export default function AppShell() {
       )}
 
       {view === "reference" && (
-        <ReferenceView materials={materials} crosswalk={crosswalk} notes={notes} onAsk={openGeneralChat} />
+        <ReferenceView materials={materials} crosswalk={crosswalk} notes={notes} />
       )}
 
       {view === "history" && (
@@ -338,7 +356,6 @@ export default function AppShell() {
         open={chatOpen}
         onClose={() => setChatOpen(false)}
         scope={chatScope}
-        seed={chatSeed}
         onApplyProposal={applyProposal}
       />
     </div>

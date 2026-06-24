@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import type { OutputGroup, PipelineResult, MaterialMaster } from "@/lib/types";
-import { buildGroupPdf, downloadBytes } from "@/lib/build";
+import type { OutputGroup, PipelineResult, MaterialMaster, PayItemCrosswalk, GroupRow } from "@/lib/types";
+import { buildGroupPdf, buildZip, downloadBytes, triggerDownload, safeName } from "@/lib/build";
 import { upsertCrosswalk } from "@/lib/db";
 import PdfViewer from "./PdfViewer";
 import {
@@ -16,13 +16,20 @@ import {
   PageIcon,
   SparkIcon,
   GavelIcon,
+  PlusIcon,
 } from "./Icons";
+
+type SaveState = "idle" | "saving" | "saved";
 
 interface Props {
   result: PipelineResult;
   doc: PDFDocumentProxy | null;
   sourceBytes: ArrayBuffer;
   materials: MaterialMaster[];
+  crosswalk: PayItemCrosswalk[];
+  projectName: string;
+  onRenameProject: (name: string) => void;
+  saveState: SaveState;
   onReset: () => void;
   onChallenge: (group: OutputGroup) => void;
   onGroupsChange?: (groups: OutputGroup[]) => void;
@@ -33,6 +40,10 @@ export default function ReviewView({
   doc,
   sourceBytes,
   materials,
+  crosswalk,
+  projectName,
+  onRenameProject,
+  saveState,
   onReset,
   onChallenge,
   onGroupsChange,
@@ -89,6 +100,40 @@ export default function ReviewView({
       pageIndexes: [...g.pageIndexes, idx].sort((a, b) => a - b),
       status: "pending",
     }));
+    setSelectedId(groupId);
+  }
+
+  // Create a brand-new output file from a single (uncategorized) page.
+  function createGroupFromPage(idx: number) {
+    const page = result.pages.find((p) => p.index === idx);
+    const cwMap = new Map(crosswalk.map((c) => [c.pay_item, c]));
+    const coverMap = new Map(result.coverRows.map((r) => [r.pay_item, r]));
+    const payItems = page?.payItems ?? [];
+    const firstCode = payItems.map((pi) => cwMap.get(pi)?.material_code).find(Boolean) ?? null;
+    const rows: GroupRow[] = payItems.map((pi) => {
+      const cover = coverMap.get(pi);
+      const cw = cwMap.get(pi);
+      return {
+        pay_item: pi,
+        description: cover?.description || cw?.pay_item_description || "",
+        quantity: cover?.quantity || "",
+        uom: cover?.uom || "",
+        material_code: cw?.material_code ?? null,
+      };
+    });
+    const label = payItems.length ? payItems.join("-") : `page${idx + 1}`;
+    const newGroup: OutputGroup = {
+      id: `g_new_${idx}_${groups.length}`,
+      materialCode: firstCode,
+      materialDescription: firstCode ? materialMap.get(firstCode)?.description ?? "" : "New file",
+      payItems,
+      pageIndexes: [idx],
+      filename: `${result.contract || "CONTRACT"}_${result.date || "DATE"}_${label}.pdf`,
+      status: "pending",
+      rows,
+    };
+    setGroups((gs) => [...gs, newGroup]);
+    setSelectedId(newGroup.id);
   }
 
   async function acceptSuggestion(groupId: string, payItem: string) {
@@ -144,16 +189,14 @@ export default function ReviewView({
     }
   }
 
-  async function downloadConfirmed() {
-    const confirmed = groups.filter((g) => g.status === "confirmed");
-    const list = confirmed.length ? confirmed : groups;
+  const folderName = safeName(projectName || `${result.contract}_${result.date}`);
+
+  async function downloadAllZip() {
+    if (!groups.length) return;
     setBuilding(true);
     try {
-      for (const g of list) {
-        const bytes = await buildGroupPdf(sourceBytes, result.coverIndex, g);
-        downloadBytes(bytes, g.filename);
-        await new Promise((r) => setTimeout(r, 250));
-      }
+      const blob = await buildZip(sourceBytes, result.coverIndex, groups, folderName);
+      triggerDownload(blob, `${folderName}.zip`);
     } finally {
       setBuilding(false);
     }
@@ -167,22 +210,36 @@ export default function ReviewView({
   return (
     <div className="flex h-[calc(100vh-57px)] flex-col">
       {/* Sub-header */}
-      <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-5 py-3 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <button className="btn-ghost px-3 py-2" onClick={onReset}>
-            <ArrowLeftIcon width={16} height={16} /> New packet
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-5 py-2.5 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-3">
+          <button className="btn-ghost shrink-0 px-3 py-2" onClick={onReset}>
+            <ArrowLeftIcon width={16} height={16} />
+            <span className="hidden sm:inline">New packet</span>
           </button>
-          <div className="hidden text-sm text-ink-faint sm:block">
-            <span className="font-semibold text-ink">{result.contract || "Contract ?"}</span>
-            <span className="mx-1.5">·</span>
-            {result.date || "date ?"}
-            <span className="mx-1.5">·</span>
-            {groups.length} files · {confirmedCount} confirmed
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="hidden text-xs font-medium text-ink-faint sm:inline">Project</span>
+              <input
+                value={projectName}
+                onChange={(e) => onRenameProject(e.target.value)}
+                placeholder="project_date"
+                className="w-40 truncate rounded-lg border border-transparent bg-transparent px-1.5 py-1 font-mono text-sm font-semibold text-ink hover:border-slate-200 focus:border-brand-400 focus:bg-white sm:w-56"
+              />
+              <SaveBadge state={saveState} />
+            </div>
+            <div className="px-1.5 text-[11px] text-ink-faint">
+              {groups.length} files · {confirmedCount} confirmed · saved to history automatically
+            </div>
           </div>
         </div>
-        <button className="btn-primary" disabled={building || groups.length === 0} onClick={downloadConfirmed}>
+        <button
+          className="btn-primary shrink-0"
+          disabled={building || groups.length === 0}
+          onClick={downloadAllZip}
+          title={`Download all ${groups.length} files as ${folderName}.zip`}
+        >
           <DownloadIcon width={16} height={16} />
-          {confirmedCount ? `Export ${confirmedCount} confirmed` : "Download all"}
+          {building ? "Zipping…" : `Download all (${groups.length})`}
         </button>
       </div>
 
@@ -236,26 +293,41 @@ export default function ReviewView({
           </div>
 
           {unassigned.length > 0 && (
-            <div className="mt-4">
-              <div className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-rose-600">
-                Unassigned pages ({unassigned.length})
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50/50 p-2.5">
+              <div className="flex items-center gap-1.5 px-1 pb-2 text-xs font-semibold text-rose-700">
+                <AlertIcon width={13} height={13} />
+                {unassigned.length} uncategorized page{unassigned.length > 1 ? "s" : ""}
               </div>
-              <div className="grid grid-cols-3 gap-2 px-1">
+              <p className="px-1 pb-2 text-[11px] text-ink-faint">
+                These didn’t match a pay item. Assign each to a file (or start a new one).
+              </p>
+              <div className="flex flex-col gap-2">
                 {unassigned.map((p) => (
-                  <div key={p.index} className="overflow-hidden rounded-lg border border-rose-200 bg-white">
+                  <div key={p.index} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1.5">
                     {p.thumbnail && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={p.thumbnail} alt={`page ${p.pageNumber}`} className="h-20 w-full object-cover object-top" />
+                      <img src={p.thumbnail} alt={`page ${p.pageNumber}`} className="h-12 w-10 shrink-0 rounded border border-slate-200 object-cover object-top" />
                     )}
-                    <div className="px-1 py-0.5 text-center text-[10px] text-ink-faint">p{p.pageNumber}</div>
-                    {selected && (
-                      <button
-                        className="w-full bg-slate-100 py-1 text-[10px] font-medium text-ink-soft hover:bg-brand-600 hover:text-white"
-                        onClick={() => addPage(selected.id, p.index)}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-medium text-ink">Page {p.pageNumber}</div>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "__new__") createGroupFromPage(p.index);
+                          else if (v) addPage(v, p.index);
+                        }}
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] focus:border-brand-400"
                       >
-                        + add here
-                      </button>
-                    )}
+                        <option value="">Assign to…</option>
+                        {groups.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.filename}
+                          </option>
+                        ))}
+                        <option value="__new__">＋ New file from this page</option>
+                      </select>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -442,6 +514,22 @@ export default function ReviewView({
       </div>
     </div>
   );
+}
+
+function SaveBadge({ state }: { state: SaveState }) {
+  if (state === "saving")
+    return (
+      <span className="chip bg-slate-100 text-ink-faint">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" /> Saving…
+      </span>
+    );
+  if (state === "saved")
+    return (
+      <span className="chip bg-emerald-50 text-emerald-700">
+        <CheckIcon width={12} height={12} /> Saved
+      </span>
+    );
+  return null;
 }
 
 function CorrectInput({

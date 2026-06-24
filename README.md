@@ -109,24 +109,30 @@ node scripts/import-master.mjs path/to/Manual_for_Materials_Inspection_Electrica
 
 - **Reference tab** — a searchable master database of every pay item (→ material
   code, description, source) and every material (code, description, group, UOM,
-  acceptance). Click any code to copy. Reachable from the top nav at any time —
-  before, during, or after a split. Each pay item has an **Ask** button that opens
-  Claude with that item in context.
+  acceptance). Click any code to copy. Reachable from the top nav at any time.
 - **History tab** — every split is saved locally as one **inspection** (project +
   date + the original packet PDF, all in IndexedDB). Reopen any inspection to
   re-view the files, quantities, and matches; edits you confirm are written back to
   that record. Nothing leaves the machine.
-- **Ask Claude** — a chat panel (top-right) for questions about any pay item,
-  material code, or cert. Attach extra **reference PDFs** to help Claude reason;
-  those attachments are used **only as prompt context** and are never added to any
-  output file.
-- **Challenge a split** — every generated file has a **Challenge** button. It sends
-  Claude the *actual cert pages in that file* (rendered images) plus your reference
-  attachments, and asks whether the material code and the included pages are right.
+- **Saving is automatic and visible** — name the project inline in the review header
+  (defaults to `contract_date`); a **Saving… / Saved** badge shows the state. The
+  same name is used for the download folder.
+- **Challenge a split (the only chat)** — chat is scoped to one output file. Each
+  generated file has a **Challenge** button that opens a chat box specific to the
+  pay items / materials in that file. It sends Claude the *actual cert pages in that
+  file* (rendered images) plus any **reference PDFs you attach** (more certs you
+  found online, etc.) — attachments are **prompt context only** and are never added
+  to the file you’re contesting.
 - **Confirm & remember** — when Claude proposes a fix (a material-code change or a
   note), you confirm it. The crosswalk row is upgraded to `confirmed` and a research
   note is stored, so the next time that cert / pay item / material code shows up,
   the tool already knows. This is the learning loop.
+- **Assign uncategorized pages** — pages that didn’t match a pay item appear in an
+  "uncategorized" list; assign each to any file (or start a new file from it) with a
+  dropdown.
+- **Download all** — one click packs every file into `project_date.zip`, whose
+  contents sit inside a single `project_date/` folder. Per-file download is also
+  available.
 
 ## Review UI
 

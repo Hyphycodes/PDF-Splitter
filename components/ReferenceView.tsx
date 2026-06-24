@@ -2,13 +2,12 @@
 
 import { useMemo, useState } from "react";
 import type { MaterialMaster, PayItemCrosswalk, ResearchNote } from "@/lib/types";
-import { SearchIcon, CopyIcon, CheckIcon, ChatIcon, SparkIcon } from "./Icons";
+import { SearchIcon, CopyIcon, CheckIcon, SparkIcon } from "./Icons";
 
 interface Props {
   materials: MaterialMaster[];
   crosswalk: PayItemCrosswalk[];
   notes: ResearchNote[];
-  onAsk: (seed: string, refs: string[]) => void;
 }
 
 const SOURCE_STYLE: Record<string, string> = {
@@ -18,7 +17,7 @@ const SOURCE_STYLE: Record<string, string> = {
   research: "bg-rose-50 text-rose-700",
 };
 
-export default function ReferenceView({ materials, crosswalk, notes, onAsk }: Props) {
+export default function ReferenceView({ materials, crosswalk, notes }: Props) {
   const [tab, setTab] = useState<"payitems" | "materials">("payitems");
   const [q, setQ] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
@@ -119,7 +118,6 @@ export default function ReferenceView({ materials, crosswalk, notes, onAsk }: Pr
                 <th className="px-4 py-2.5 font-semibold">Description</th>
                 <th className="px-4 py-2.5 font-semibold">Material</th>
                 <th className="px-4 py-2.5 font-semibold">Source</th>
-                <th className="px-4 py-2.5 font-semibold"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -153,23 +151,10 @@ export default function ReferenceView({ materials, crosswalk, notes, onAsk }: Pr
                     <td className="px-4 py-2.5">
                       <span className={`chip ${SOURCE_STYLE[r.source] ?? "bg-slate-100 text-slate-600"}`}>{r.source}</span>
                     </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <button
-                        onClick={() =>
-                          onAsk(
-                            `Tell me about pay item ${r.pay_item} (${r.pay_item_description}) and confirm its material code.`,
-                            [r.pay_item, r.material_code ?? ""].filter(Boolean)
-                          )
-                        }
-                        className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-ink-soft hover:bg-brand-600 hover:text-white"
-                      >
-                        <ChatIcon width={12} height={12} /> Ask
-                      </button>
-                    </td>
                   </tr>
                 );
               })}
-              {payRows.length === 0 && <EmptyRow span={5} />}
+              {payRows.length === 0 && <EmptyRow span={4} />}
             </tbody>
           </table>
         ) : (
