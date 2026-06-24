@@ -14,17 +14,15 @@ export interface ProgressEvent {
 
 export interface RunOptions {
   research: boolean;
-  /** let Claude read the cover sheet + any scanned pages */
-  aiRead: boolean;
-  /** is an Anthropic key actually available (server or browser) */
+  /** is an Anthropic key available (server or browser); cover + OCR use it automatically */
   keyAvailable: boolean;
   filename: string;
   onProgress?: (e: ProgressEvent) => void;
 }
 
 const THUMB_WIDTH = 360;
-const OCR_WIDTH = 1700;
-const COVER_WIDTH = 2000;
+const OCR_WIDTH = 1800;
+const COVER_WIDTH = 2600;
 
 /** Normalize a date string to MMDDYY; fall back to today. */
 function normalizeDate(raw: string): string {
@@ -63,8 +61,9 @@ export async function runPipeline(
   numPages: number,
   opts: RunOptions
 ): Promise<PipelineResult> {
-  const { onProgress, research, aiRead, keyAvailable, filename } = opts;
-  const ai = aiRead && keyAvailable;
+  const { onProgress, research, keyAvailable, filename } = opts;
+  // Claude reads the cover sheet + any scanned pages automatically when a key exists.
+  const ai = keyAvailable;
   const warnings: string[] = [];
   const [crosswalk, materials] = await Promise.all([getCrosswalkMap(), getMaterialMap()]);
 
@@ -87,31 +86,36 @@ export async function runPipeline(
   }
 
   // ---- Read the cover sheet ------------------------------------------------
+  // Read it locally first; automatically escalate to Claude only if the local
+  // read isn't trustworthy enough (no text layer, missing quantities, etc.).
+  const coverText = texts[coverIndex]?.text ?? "";
   const coverHasText = texts[coverIndex]?.hasTextLayer;
-  let coverRows: CoverRow[] = [];
-  let contract = "";
-  let date = "";
+  const localRows = parseCoverRows(coverText);
+  const localGuess = guessContractAndDate(coverText, filename);
+  const payItemsOnCover = findPayItems(coverText).length;
 
-  if (ai) {
+  let coverRows: CoverRow[] = localRows;
+  let contract = localGuess.contract;
+  let date = localGuess.date;
+
+  const localGoodEnough =
+    coverHasText &&
+    localRows.length > 0 &&
+    localRows.length >= payItemsOnCover &&
+    localRows.every((r) => r.quantity && r.uom) &&
+    /QUANTITY|\bQTY\b/i.test(coverText); // a real quantity column we can trust
+
+  if (ai && !localGoodEnough) {
     onProgress?.({ phase: "Reading cover sheet with Claude", current: 1, total: 1 });
     const coverImg = await renderPage(doc, coverIndex + 1, COVER_WIDTH);
-    const { data, error } = await ocrCover(coverImg, texts[coverIndex]?.text);
+    const { data, error } = await ocrCover(coverImg, coverText);
     if (error) {
-      warnings.push(`Cover read via Claude failed: ${error}. Falling back to local text.`);
-    } else {
+      warnings.push(`Cover read via Claude failed: ${error}. Using local read.`);
+    } else if (data.rows.length) {
       coverRows = data.rows;
-      contract = data.contract;
-      date = data.date;
+      contract = data.contract || contract;
+      date = data.date || date;
     }
-  }
-
-  // Local fallback (no AI, or AI failed/blank).
-  if (coverRows.length === 0) {
-    const coverText = texts[coverIndex]?.text ?? "";
-    coverRows = parseCoverRows(coverText);
-    const guess = guessContractAndDate(coverText, filename);
-    contract = contract || guess.contract;
-    date = date || guess.date;
   }
   date = normalizeDate(date);
   if (!contract) {
@@ -163,8 +167,8 @@ export async function runPipeline(
   }
 
   if (ocrErrors > 0) warnings.push(`${ocrErrors} scanned page(s) couldn't be read by Claude.`);
-  if (!ai && texts.some((t) => !t.hasTextLayer)) {
-    warnings.push("This packet has scanned pages. Turn on Claude reading (and link an API key) to read them.");
+  if (!ai) {
+    warnings.push("No Anthropic key linked — quantities and scanned pages were read locally and may be incomplete.");
   }
   void coverHasText;
 

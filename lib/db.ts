@@ -4,12 +4,13 @@ import type {
   PayItemCrosswalk,
   Inspection,
   ResearchNote,
+  ResearchDoc,
 } from "./types";
 import { MATERIAL_MASTER_SEED } from "./material-master-seed";
 import { CROSSWALK_SEED } from "./crosswalk-seed";
 
 const DB_NAME = "cert-splitter";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -35,6 +36,10 @@ function getDB() {
         }
         if (!db.objectStoreNames.contains("research_notes")) {
           db.createObjectStore("research_notes", { keyPath: "key" });
+        }
+        if (!db.objectStoreNames.contains("research_docs")) {
+          const store = db.createObjectStore("research_docs", { keyPath: "id" });
+          store.createIndex("added_at", "added_at");
         }
       },
     });
@@ -142,6 +147,24 @@ export async function getRelevantNotes(refs: string[]): Promise<ResearchNote[]> 
   const all = await getAllResearchNotes();
   const set = new Set(refs);
   return all.filter((n) => set.has(n.ref));
+}
+
+// ---- Saved reference documents --------------------------------------------
+
+export async function saveResearchDoc(doc: ResearchDoc): Promise<void> {
+  const db = await getDB();
+  await db.put("research_docs", doc);
+}
+
+export async function getAllResearchDocs(): Promise<ResearchDoc[]> {
+  const db = await getDB();
+  const rows = (await db.getAll("research_docs")) as ResearchDoc[];
+  return rows.sort((a, b) => b.added_at - a.added_at);
+}
+
+export async function deleteResearchDoc(id: string): Promise<void> {
+  const db = await getDB();
+  await db.delete("research_docs", id);
 }
 
 /** Wipe and re-seed — useful for development / "reset data". */

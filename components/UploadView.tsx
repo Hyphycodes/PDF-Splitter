@@ -6,8 +6,6 @@ import { UploadIcon, FileIcon, ShieldIcon, SparkIcon } from "./Icons";
 interface Props {
   research: boolean;
   setResearch: (v: boolean) => void;
-  aiRead: boolean;
-  setAiRead: (v: boolean) => void;
   apiKey: string;
   setApiKey: (v: string) => void;
   serverKey: boolean;
@@ -17,8 +15,6 @@ interface Props {
 export default function UploadView({
   research,
   setResearch,
-  aiRead,
-  setAiRead,
   apiKey,
   setApiKey,
   serverKey,
@@ -88,18 +84,11 @@ export default function UploadView({
         <Toggle
           icon={<SparkIcon className="text-brand-600" />}
           title="Research mode"
-          desc="Sanity-check assigned material codes against what the cert describes (e.g. conductor count), and flag mismatches. Confirmed rows are never auto-flagged."
+          desc="After splitting, Claude verifies each material against the cert and the pay-item description, web-searches the manufacturer's datasheet (Service Wire, Advanced Digital Cable, …), and flags any disagreement. Found datasheets can be saved to your reference library."
           checked={research}
           onChange={setResearch}
         />
-        <Toggle
-          icon={<ShieldIcon className="text-emerald-600" />}
-          title="Let Claude read the cover & scanned pages"
-          desc="Reads the cover sheet for accurate quantities + date, and OCRs any scanned/image-only cert page with the most capable model. One page image at a time — text-layer cert pages stay on this machine."
-          checked={aiRead}
-          onChange={setAiRead}
-        />
-        {aiRead && !serverKey && (
+        {!serverKey && (
           <div className="px-5 py-4">
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-faint">
               Anthropic API key
@@ -112,13 +101,13 @@ export default function UploadView({
               className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-mono placeholder:text-slate-400 focus:border-brand-400"
             />
             <p className="mt-1.5 text-xs text-ink-faint">
-              Stored only in this browser (localStorage). Used to read the cover sheet and scanned pages.
+              Stored only in this browser (localStorage). Powers cover reading, scanned-page OCR, research, and challenges.
             </p>
           </div>
         )}
-        {aiRead && serverKey && (
+        {serverKey && (
           <div className="px-5 py-3 text-xs text-emerald-700">
-            Anthropic API is linked on this deployment — no key needed.
+            Anthropic API is linked — Claude steps in automatically when a page needs more than the text layer.
           </div>
         )}
       </div>
@@ -130,16 +119,16 @@ export default function UploadView({
       >
         Split packet
       </button>
-      {aiRead && !keyReady && (
+      {!keyReady && (
         <p className="mt-2 text-center text-xs text-amber-600">
-          No API key linked yet — Claude reading needs one for the cover sheet & scanned pages.
-          Add a key above, or it’ll run locally on the text layer only.
+          No API key linked — the tool reads the text layer locally. Add a key for accurate quantities on
+          messy/scanned packets, research, and challenges.
         </p>
       )}
 
       <p className="mt-6 flex items-center justify-center gap-1.5 text-center text-xs text-ink-faint">
         <ShieldIcon width={14} height={14} className="text-emerald-600" />
-        Local-first: PDF reading, splitting, and your master data never leave this machine.
+        Reads what it can locally first; Claude steps in automatically only when a page needs more power.
       </p>
     </div>
   );

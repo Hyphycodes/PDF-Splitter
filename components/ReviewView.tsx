@@ -1,11 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import type { OutputGroup, PipelineResult, MaterialMaster, PayItemCrosswalk, GroupRow } from "@/lib/types";
+import type {
+  OutputGroup,
+  PipelineResult,
+  MaterialMaster,
+  PayItemCrosswalk,
+  GroupRow,
+  ResearchSource,
+} from "@/lib/types";
 import { buildGroupPdf, buildZip, downloadBytes, triggerDownload, safeName } from "@/lib/build";
 import { upsertCrosswalk } from "@/lib/db";
+import { renderPageJpeg } from "@/lib/pdf";
+import { runResearch, saveReferenceFromSource } from "@/lib/researchClient";
 import PdfViewer from "./PdfViewer";
+import PageLightbox from "./PageLightbox";
 import {
   CheckIcon,
   CopyIcon,
@@ -17,6 +27,9 @@ import {
   SparkIcon,
   GavelIcon,
   PlusIcon,
+  GlobeIcon,
+  LinkIcon,
+  SearchIcon,
 } from "./Icons";
 
 type SaveState = "idle" | "saving" | "saved";
@@ -27,6 +40,8 @@ interface Props {
   sourceBytes: ArrayBuffer;
   materials: MaterialMaster[];
   crosswalk: PayItemCrosswalk[];
+  research: boolean;
+  keyAvailable: boolean;
   projectName: string;
   onRenameProject: (name: string) => void;
   saveState: SaveState;
@@ -41,6 +56,8 @@ export default function ReviewView({
   sourceBytes,
   materials,
   crosswalk,
+  research,
+  keyAvailable,
   projectName,
   onRenameProject,
   saveState,
@@ -53,12 +70,35 @@ export default function ReviewView({
   const [copied, setCopied] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
   const [correcting, setCorrecting] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ index: number; assign: boolean } | null>(null);
+  const [editingPages, setEditingPages] = useState(false);
+  const [savedRefs, setSavedRefs] = useState<Set<string>>(new Set());
+  const startedResearch = useRef<Set<string>>(new Set());
 
   // Reset local state when a different inspection is opened.
   useEffect(() => {
     setGroups(result.groups);
     setSelectedId(result.groups[0]?.id ?? "");
+    startedResearch.current = new Set();
   }, [result]);
+
+  // Research mode: verify each material against the cert + a manufacturer datasheet.
+  useEffect(() => {
+    if (!research || !keyAvailable || !doc) return;
+    let cancelled = false;
+    (async () => {
+      for (const g of result.groups) {
+        if (cancelled) return;
+        if (startedResearch.current.has(g.id)) continue;
+        startedResearch.current.add(g.id);
+        await runGroupResearch(g);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, research, keyAvailable, doc]);
 
   // Lift group changes for persistence (debounced by the parent).
   useEffect(() => {
@@ -101,6 +141,75 @@ export default function ReviewView({
       status: "pending",
     }));
     setSelectedId(groupId);
+  }
+
+  // Move a page into a file, removing it from any other file it was in.
+  function addPageExclusive(groupId: string, idx: number) {
+    setGroups((gs) =>
+      gs.map((g) => {
+        if (g.id === groupId) {
+          if (g.pageIndexes.includes(idx)) return g;
+          return { ...g, pageIndexes: [...g.pageIndexes, idx].sort((a, b) => a - b), status: "pending" };
+        }
+        if (g.pageIndexes.includes(idx)) {
+          return { ...g, pageIndexes: g.pageIndexes.filter((i) => i !== idx), status: "pending" };
+        }
+        return g;
+      })
+    );
+  }
+
+  // ---- Research --------------------------------------------------------------
+  async function runGroupResearch(group: OutputGroup) {
+    if (!doc) return;
+    update(group.id, (g) => ({ ...g, research: { status: "pending" } }));
+    try {
+      const images: string[] = [];
+      for (const idx of group.pageIndexes.slice(0, 2)) {
+        images.push(await renderPageJpeg(doc, idx + 1, 1500, 0.6));
+      }
+      const hintText = group.pageIndexes
+        .map((i) => result.pages.find((p) => p.index === i)?.rawText || "")
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 4000);
+      const r = await runResearch({
+        material_code: group.materialCode,
+        description: group.rows.map((x) => x.description).filter(Boolean).join("; "),
+        payItems: group.payItems,
+        images,
+        hintText,
+      });
+      update(group.id, (g) => ({ ...g, research: r }));
+    } catch (e) {
+      update(group.id, (g) => ({ ...g, research: { status: "error", error: String(e) } }));
+    }
+  }
+
+  async function saveRef(source: ResearchSource, refs: string[]) {
+    const res = await saveReferenceFromSource(source, refs);
+    if (res.ok) setSavedRefs((s) => new Set(s).add(source.url));
+  }
+
+  // Apply a research-suggested material code to the whole file + remember it.
+  async function applyResearchCode(group: OutputGroup, code: string) {
+    const c = code.trim();
+    if (!c) return;
+    for (const r of group.rows) {
+      await upsertCrosswalk({
+        pay_item: r.pay_item,
+        pay_item_description: r.description,
+        material_code: c,
+        confidence: 1,
+        source: "confirmed",
+      });
+    }
+    update(group.id, (g) => ({
+      ...g,
+      materialCode: c,
+      materialDescription: materialMap.get(c)?.description ?? g.materialDescription,
+      rows: g.rows.map((r) => ({ ...r, material_code: c, suggestion: undefined, flag: undefined })),
+    }));
   }
 
   // Create a brand-new output file from a single (uncategorized) page.
@@ -304,10 +413,17 @@ export default function ReviewView({
               <div className="flex flex-col gap-2">
                 {unassigned.map((p) => (
                   <div key={p.index} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1.5">
-                    {p.thumbnail && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={p.thumbnail} alt={`page ${p.pageNumber}`} className="h-12 w-10 shrink-0 rounded border border-slate-200 object-cover object-top" />
-                    )}
+                    <button
+                      onClick={() => setLightbox({ index: p.index, assign: true })}
+                      title="Click to view full page"
+                      className="relative shrink-0"
+                    >
+                      {p.thumbnail && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={p.thumbnail} alt={`page ${p.pageNumber}`} className="h-14 w-11 rounded border border-slate-200 object-cover object-top hover:ring-2 hover:ring-brand-400" />
+                      )}
+                      <span className="absolute inset-x-0 bottom-0 bg-slate-900/60 py-0.5 text-center text-[8px] font-medium text-white">view</span>
+                    </button>
                     <div className="min-w-0 flex-1">
                       <div className="text-[11px] font-medium text-ink">Page {p.pageNumber}</div>
                       <select
@@ -470,21 +586,38 @@ export default function ReviewView({
                 </table>
               </div>
 
+              {/* Research panel */}
+              <ResearchPanel
+                group={selected}
+                keyAvailable={keyAvailable}
+                savedRefs={savedRefs}
+                onRun={() => runGroupResearch(selected)}
+                onApplyCode={(code) => applyResearchCode(selected, code)}
+                onSaveRef={(src) => saveRef(src, [selected.materialCode ?? "", ...selected.payItems].filter(Boolean))}
+              />
+
               {/* Assigned pages (reassignment) */}
               <div className="card mb-4 p-4">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-                  <PageIcon width={16} height={16} className="text-brand-600" /> Pages in this file
-                  <span className="text-xs font-normal text-ink-faint">(cover sheet is added automatically)</span>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+                    <PageIcon width={16} height={16} className="text-brand-600" /> Pages in this file
+                    <span className="text-xs font-normal text-ink-faint">(cover added automatically)</span>
+                  </div>
+                  <button className="btn-subtle px-3 py-1.5 text-xs" onClick={() => setEditingPages(true)}>
+                    <PlusIcon width={14} height={14} /> Add / edit pages
+                  </button>
                 </div>
                 <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
                   {selected.pageIndexes.map((idx) => {
                     const pg = result.pages.find((p) => p.index === idx);
                     return (
                       <div key={idx} className="group relative overflow-hidden rounded-lg border border-slate-200 bg-white">
-                        {pg?.thumbnail && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={pg.thumbnail} alt={`page ${idx + 1}`} className="h-28 w-full object-cover object-top" />
-                        )}
+                        <button onClick={() => setLightbox({ index: idx, assign: false })} title="Click to view full page">
+                          {pg?.thumbnail && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={pg.thumbnail} alt={`page ${idx + 1}`} className="h-28 w-full object-cover object-top hover:opacity-90" />
+                          )}
+                        </button>
                         <div className="px-1.5 py-1 text-center text-[11px] text-ink-faint">p{idx + 1}</div>
                         <button
                           onClick={() => removePage(selected.id, idx)}
@@ -497,7 +630,7 @@ export default function ReviewView({
                   })}
                   {selected.pageIndexes.length === 0 && (
                     <div className="col-span-full rounded-lg border border-dashed border-slate-300 py-6 text-center text-xs text-ink-faint">
-                      No cert pages assigned. Add pages from the unassigned list on the left.
+                      No cert pages assigned. Use “Add / edit pages” to choose pages.
                     </div>
                   )}
                 </div>
@@ -512,6 +645,76 @@ export default function ReviewView({
           )}
         </main>
       </div>
+
+      {/* Full-page lightbox */}
+      <PageLightbox
+        doc={doc}
+        index={lightbox?.index ?? null}
+        title={lightbox ? `Page ${lightbox.index + 1}` : undefined}
+        onClose={() => setLightbox(null)}
+        actions={
+          lightbox?.assign ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-white/80">Assign this page to:</span>
+              {groups.map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => {
+                    addPageExclusive(g.id, lightbox.index);
+                    setSelectedId(g.id);
+                    setLightbox(null);
+                  }}
+                  className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-600"
+                >
+                  {g.filename}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  createGroupFromPage(lightbox.index);
+                  setLightbox(null);
+                }}
+                className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-600"
+              >
+                ＋ New file
+              </button>
+            </div>
+          ) : (
+            selected && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-white/80">Move this page to:</span>
+                {groups
+                  .filter((g) => g.id !== selectedId)
+                  .map((g) => (
+                    <button
+                      key={g.id}
+                      onClick={() => {
+                        addPageExclusive(g.id, lightbox!.index);
+                        setLightbox(null);
+                      }}
+                      className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-600"
+                    >
+                      {g.filename}
+                    </button>
+                  ))}
+              </div>
+            )
+          )
+        }
+      />
+
+      {/* Add / edit pages modal */}
+      {editingPages && selected && (
+        <PageManager
+          groupName={selected.filename}
+          pages={result.pages.filter((p) => !p.isCoverSheet && p.index !== result.coverIndex)}
+          assignedHere={new Set(selected.pageIndexes)}
+          assignedElsewhere={(idx) => groups.some((g) => g.id !== selectedId && g.pageIndexes.includes(idx))}
+          onToggle={(idx, on) => (on ? addPageExclusive(selectedId, idx) : removePage(selectedId, idx))}
+          onView={(idx) => setLightbox({ index: idx, assign: false })}
+          onClose={() => setEditingPages(false)}
+        />
+      )}
     </div>
   );
 }
@@ -568,6 +771,198 @@ function CorrectInput({
       <button className="rounded-md px-2 py-1 text-xs text-ink-faint hover:bg-slate-100" onClick={onCancel}>
         Cancel
       </button>
+    </div>
+  );
+}
+
+const VERDICT_STYLE: Record<string, { chip: string; label: string }> = {
+  match: { chip: "bg-emerald-50 text-emerald-700", label: "Matches" },
+  mismatch: { chip: "bg-rose-50 text-rose-700", label: "Possible mismatch" },
+  unclear: { chip: "bg-amber-50 text-amber-700", label: "Unclear" },
+};
+
+function ResearchPanel({
+  group,
+  keyAvailable,
+  savedRefs,
+  onRun,
+  onApplyCode,
+  onSaveRef,
+}: {
+  group: OutputGroup;
+  keyAvailable: boolean;
+  savedRefs: Set<string>;
+  onRun: () => void;
+  onApplyCode: (code: string) => void;
+  onSaveRef: (src: ResearchSource) => void;
+}) {
+  const r = group.research;
+  const v = r?.verdict ? VERDICT_STYLE[r.verdict] : null;
+  return (
+    <div className="card mb-4 p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <GlobeIcon width={16} height={16} className="text-brand-600" /> Research
+          {v && <span className={`chip ${v.chip}`}>{v.label}</span>}
+        </div>
+        <button
+          className="btn-subtle px-3 py-1.5 text-xs"
+          disabled={!keyAvailable || r?.status === "pending"}
+          onClick={onRun}
+          title={keyAvailable ? "Verify against the cert + manufacturer datasheet" : "Link an API key to use research"}
+        >
+          <SearchIcon width={14} height={14} />
+          {r?.status === "pending" ? "Researching…" : r ? "Re-research" : "Research this material"}
+        </button>
+      </div>
+
+      {!r && (
+        <p className="text-xs text-ink-faint">
+          Checks the pay-item description against the cert and the manufacturer’s datasheet (found online),
+          and flags any disagreement — e.g. a “2C” description whose datasheet shows a single conductor.
+        </p>
+      )}
+
+      {r?.status === "pending" && (
+        <div className="flex items-center gap-2 text-xs text-ink-faint">
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600" />
+          Reading the certs and searching manufacturer datasheets…
+        </div>
+      )}
+
+      {r?.status === "error" && (
+        <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{r.error}</div>
+      )}
+
+      {r?.status === "done" && (
+        <div className="space-y-3">
+          {r.summary && <p className="text-sm text-ink-soft">{r.summary}</p>}
+
+          {r.suggestedCode && r.suggestedCode !== group.materialCode && (
+            <div className="flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50/60 p-2.5">
+              <SparkIcon width={14} height={14} className="text-brand-600" />
+              <span className="text-xs text-ink-soft">
+                Research suggests material code <b>{r.suggestedCode}</b> (currently {group.materialCode ?? "none"}).
+              </span>
+              <button
+                className="ml-auto rounded-md bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"
+                onClick={() => onApplyCode(r.suggestedCode!)}
+              >
+                Apply &amp; remember
+              </button>
+            </div>
+          )}
+
+          {r.sources && r.sources.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+                Manufacturer sources
+              </div>
+              <div className="space-y-1.5">
+                {r.sources.map((s) => (
+                  <div key={s.url} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2">
+                    <LinkIcon width={13} height={13} className="shrink-0 text-ink-faint" />
+                    <a
+                      href={s.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1 truncate text-xs text-brand-700 hover:underline"
+                      title={s.url}
+                    >
+                      {s.title}
+                      {s.isPdf && <span className="ml-1 rounded bg-rose-100 px-1 text-[9px] font-semibold text-rose-700">PDF</span>}
+                    </a>
+                    {savedRefs.has(s.url) ? (
+                      <span className="chip bg-emerald-50 text-emerald-700">
+                        <CheckIcon width={11} height={11} /> saved
+                      </span>
+                    ) : (
+                      <button
+                        className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-brand-600 hover:text-white"
+                        onClick={() => onSaveRef(s)}
+                      >
+                        Save to references
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PageManager({
+  groupName,
+  pages,
+  assignedHere,
+  assignedElsewhere,
+  onToggle,
+  onView,
+  onClose,
+}: {
+  groupName: string;
+  pages: { index: number; pageNumber: number; thumbnail?: string; payItems: string[] }[];
+  assignedHere: Set<number>;
+  assignedElsewhere: (idx: number) => boolean;
+  onToggle: (idx: number, on: boolean) => void;
+  onView: (idx: number) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-float" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+          <div>
+            <div className="text-sm font-semibold text-ink">Add / edit pages</div>
+            <div className="truncate font-mono text-xs text-ink-faint">{groupName}</div>
+          </div>
+          <button onClick={onClose} className="btn-primary px-3 py-1.5 text-xs">
+            Done
+          </button>
+        </div>
+        <p className="border-b border-slate-100 px-5 py-2 text-xs text-ink-faint">
+          Check a page to add it to this file. Adding a page moves it here and removes it from any other file.
+          Click a page to view it full-size.
+        </p>
+        <div className="grid grid-cols-3 gap-3 overflow-y-auto p-4 sm:grid-cols-4 md:grid-cols-5">
+          {pages.map((p) => {
+            const here = assignedHere.has(p.index);
+            const elsewhere = !here && assignedElsewhere(p.index);
+            return (
+              <div
+                key={p.index}
+                className={`overflow-hidden rounded-lg border-2 transition ${
+                  here ? "border-brand-500 ring-2 ring-brand-200" : elsewhere ? "border-amber-300" : "border-slate-200"
+                }`}
+              >
+                <button onClick={() => onView(p.index)} className="block w-full" title="View full page">
+                  {p.thumbnail && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.thumbnail} alt={`page ${p.pageNumber}`} className="h-32 w-full object-cover object-top" />
+                  )}
+                </button>
+                <label className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={here}
+                    onChange={(e) => onToggle(p.index, e.target.checked)}
+                    className="h-3.5 w-3.5 accent-brand-600"
+                  />
+                  <span className="font-medium text-ink">p{p.pageNumber}</span>
+                  {elsewhere && <span className="ml-auto text-amber-600">in another file</span>}
+                  {p.payItems.length > 0 && !elsewhere && (
+                    <span className="ml-auto truncate font-mono text-ink-faint">{p.payItems[0]}</span>
+                  )}
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

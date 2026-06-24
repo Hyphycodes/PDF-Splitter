@@ -28,6 +28,7 @@ Rules:
 - The conductor-count rule: a cable described "... N C" maps to material code 301-0-N (e.g. 3C -> 30103, 5C -> 30105); "... PR / pairs" -> 30115. Flag mismatches.
 - "confirmed" crosswalk rows are authoritative — do not contradict them unless the cert clearly proves otherwise; if you do, explain the evidence.
 - Be concise and concrete. Cite the page or the cert text you relied on.
+- You can use web search to look up manufacturer datasheets/certs (e.g. Service Wire, Advanced Digital Cable, Southwire) when it helps verify a material; share the links you find.
 
 When — and only when — you recommend a concrete change the inspector should save and remember, end your reply with a fenced code block labelled json containing:
 \`\`\`json
@@ -88,8 +89,9 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 1500,
+        max_tokens: 1800,
         system: SYSTEM,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
         messages: anthropicMessages,
       }),
     });

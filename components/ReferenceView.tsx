@@ -1,13 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { MaterialMaster, PayItemCrosswalk, ResearchNote } from "@/lib/types";
-import { SearchIcon, CopyIcon, CheckIcon, SparkIcon } from "./Icons";
+import type { MaterialMaster, PayItemCrosswalk, ResearchNote, ResearchDoc } from "@/lib/types";
+import { SearchIcon, CopyIcon, CheckIcon, SparkIcon, LinkIcon, TrashIcon } from "./Icons";
 
 interface Props {
   materials: MaterialMaster[];
   crosswalk: PayItemCrosswalk[];
   notes: ResearchNote[];
+  docs: ResearchDoc[];
+  onDeleteDoc: (id: string) => void;
 }
 
 const SOURCE_STYLE: Record<string, string> = {
@@ -17,7 +19,7 @@ const SOURCE_STYLE: Record<string, string> = {
   research: "bg-rose-50 text-rose-700",
 };
 
-export default function ReferenceView({ materials, crosswalk, notes }: Props) {
+export default function ReferenceView({ materials, crosswalk, notes, docs, onDeleteDoc }: Props) {
   const [tab, setTab] = useState<"payitems" | "materials">("payitems");
   const [q, setQ] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
@@ -187,6 +189,44 @@ export default function ReferenceView({ materials, crosswalk, notes }: Props) {
           </table>
         )}
       </div>
+
+      {/* Saved manufacturer references */}
+      {docs.length > 0 && (
+        <div className="mt-8">
+          <h2 className="mb-1 text-lg font-bold tracking-tight text-ink">Reference library</h2>
+          <p className="mb-3 text-sm text-ink-faint">
+            Manufacturer datasheets & certs saved during research. Reference-only — never added to output files.
+          </p>
+          <div className="card divide-y divide-slate-100">
+            {docs.map((d) => (
+              <div key={d.id} className="flex items-center gap-3 px-4 py-2.5">
+                <LinkIcon width={15} height={15} className="shrink-0 text-ink-faint" />
+                <button
+                  onClick={() => {
+                    const href = d.blob ? URL.createObjectURL(d.blob) : d.url;
+                    window.open(href, "_blank", "noopener");
+                  }}
+                  className="min-w-0 flex-1 truncate text-left text-sm text-brand-700 hover:underline"
+                  title={d.url}
+                >
+                  {d.name}
+                  {d.blob && <span className="ml-2 rounded bg-emerald-100 px-1 text-[9px] font-semibold text-emerald-700">downloaded</span>}
+                </button>
+                {d.refs.length > 0 && (
+                  <span className="hidden font-mono text-xs text-ink-faint sm:inline">{d.refs.join(", ")}</span>
+                )}
+                <button
+                  onClick={() => onDeleteDoc(d.id)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                  title="Remove reference"
+                >
+                  <TrashIcon width={15} height={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

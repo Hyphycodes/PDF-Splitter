@@ -57,6 +57,23 @@ export interface OutputGroup {
   status: "pending" | "confirmed";
   /** per pay-item review data shown in the table */
   rows: GroupRow[];
+  /** research-mode findings (populated asynchronously when research is on) */
+  research?: ResearchResult;
+}
+
+export interface ResearchSource {
+  title: string;
+  url: string;
+  isPdf: boolean;
+}
+
+export interface ResearchResult {
+  status: "pending" | "done" | "error";
+  verdict?: "match" | "mismatch" | "unclear";
+  suggestedCode?: string | null;
+  summary?: string;
+  sources?: ResearchSource[];
+  error?: string;
 }
 
 export interface GroupRow {
@@ -111,6 +128,18 @@ export interface ResearchNote {
   note: string;
   confirmed: boolean;
   updated_at: number;
+}
+
+// ---- Saved reference documents (manufacturer datasheets / certs) -----------
+
+export interface ResearchDoc {
+  id: string;
+  name: string;
+  url: string;
+  /** material codes / pay items this reference relates to */
+  refs: string[];
+  blob?: Blob; // downloaded copy, when saved into the app
+  added_at: number;
 }
 
 // ---- Chat / challenge ------------------------------------------------------

@@ -16,6 +16,8 @@ import {
   deleteInspection,
   upsertCrosswalk,
   upsertResearchNote,
+  getAllResearchDocs,
+  deleteResearchDoc,
 } from "@/lib/db";
 import { loadPdf, renderPage, renderPageJpeg } from "@/lib/pdf";
 import { runPipeline, type ProgressEvent } from "@/lib/pipeline";
@@ -26,6 +28,7 @@ import type {
   MaterialMaster,
   PayItemCrosswalk,
   ResearchNote,
+  ResearchDoc,
   Inspection,
   PipelineResult,
   OutputGroup,
@@ -59,10 +62,10 @@ export default function AppShell() {
   const [crosswalk, setCrosswalk] = useState<PayItemCrosswalk[]>([]);
   const [notes, setNotes] = useState<ResearchNote[]>([]);
   const [inspections, setInspections] = useState<Inspection[]>([]);
+  const [researchDocs, setResearchDocs] = useState<ResearchDoc[]>([]);
 
   // Settings
   const [research, setResearch] = useState(false);
-  const [aiRead, setAiRead] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [serverKey, setServerKey] = useState(false);
 
@@ -78,16 +81,18 @@ export default function AppShell() {
   const latestGroups = useRef<OutputGroup[] | null>(null);
 
   const refreshData = useCallback(async () => {
-    const [m, c, n, i] = await Promise.all([
+    const [m, c, n, i, d] = await Promise.all([
       getAllMaterials(),
       getAllCrosswalk(),
       getAllResearchNotes(),
       getAllInspections(),
+      getAllResearchDocs(),
     ]);
     setMaterials(m);
     setCrosswalk(c);
     setNotes(n);
     setInspections(i);
+    setResearchDocs(d);
   }, []);
 
   useEffect(() => {
@@ -115,7 +120,6 @@ export default function AppShell() {
 
       const res = await runPipeline(loaded.doc, loaded.numPages, {
         research,
-        aiRead,
         keyAvailable: serverKey || !!apiKey,
         filename: file.name,
         onProgress: setProgress,
@@ -307,8 +311,6 @@ export default function AppShell() {
         <UploadView
           research={research}
           setResearch={setResearch}
-          aiRead={aiRead}
-          setAiRead={setAiRead}
           apiKey={apiKey}
           setApiKey={setApiKey}
           serverKey={serverKey}
@@ -335,6 +337,8 @@ export default function AppShell() {
           sourceBytes={sourceBytes}
           materials={materials}
           crosswalk={crosswalk}
+          research={research}
+          keyAvailable={serverKey || !!apiKey}
           projectName={projectName}
           onRenameProject={renameProject}
           saveState={saveState}
@@ -345,7 +349,16 @@ export default function AppShell() {
       )}
 
       {view === "reference" && (
-        <ReferenceView materials={materials} crosswalk={crosswalk} notes={notes} />
+        <ReferenceView
+          materials={materials}
+          crosswalk={crosswalk}
+          notes={notes}
+          docs={researchDocs}
+          onDeleteDoc={async (id) => {
+            await deleteResearchDoc(id);
+            await refreshData();
+          }}
+        />
       )}
 
       {view === "history" && (

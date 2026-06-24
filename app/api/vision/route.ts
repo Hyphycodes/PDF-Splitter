@@ -27,16 +27,19 @@ const OCR_PROMPT =
 
 const COVER_PROMPT =
   "This is the COVER SHEET (an IDOT 'IL OKAY LOG' / materials summary) of an electrical inspection " +
-  "packet. Read the whole sheet carefully and extract:\n" +
+  "packet. Read the whole sheet carefully — it is a table with columns that typically include a line " +
+  "number, PAY ITEM number, DESCRIPTION, QUANTITY, and UNIT. Extract:\n" +
   "1. The contract number (often like 62P93).\n" +
-  "2. The date it was initialed / stamped by the inspector (the hand-written or stamped date). " +
-  "Return it as MMDDYY (6 digits).\n" +
-  "3. Every pay-item row in the table, IN THE ORDER THEY APPEAR top-to-bottom. For each row capture " +
-  "the pay-item number, the description, the QUANTITY, and the unit of measure.\n" +
-  "Pay-item numbers are 8 characters (8 digits, or a letter + 7). Quantities may have decimals.\n" +
+  "2. The date it was initialed / stamped by the inspector (hand-written or stamped). Return MMDDYY.\n" +
+  "3. EVERY pay-item row, top-to-bottom, in order. Do not skip rows and do not invent rows.\n\n" +
+  "CRITICAL for QUANTITY: read the value from the QUANTITY column only. Do NOT use the line number, " +
+  "the pay-item number, a unit price, or a dollar amount. Quantities can have decimals and thousands " +
+  "separators (e.g. 1,500 or 250.5) — return digits only, no commas (1500, 250.5). Align each quantity " +
+  "to the SAME ROW as its pay item; double-check you didn't shift a row up or down.\n" +
+  "Pay-item numbers are 8 characters (8 digits, or a letter + 7).\n" +
   'Respond with ONLY JSON: {"contract":"62P93","date":"062226","rows":[{"pay_item":"87301225",' +
   '"description":"ELCBL C SIGNAL 14 3C","quantity":"1500","uom":"LINFT"}]}. ' +
-  "Use empty strings for anything you genuinely cannot read. No commentary.";
+  "Use empty strings only for cells you genuinely cannot read. No commentary.";
 
 function extractJson(text: string): Record<string, unknown> | null {
   const match = text.match(/\{[\s\S]*\}/);

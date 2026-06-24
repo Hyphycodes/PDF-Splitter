@@ -58,17 +58,35 @@ The PDF bytes never need to hit a server. The only calls that leave the machine
 are single-page images for pages that have **no readable text layer** — and only
 when OCR is switched on.
 
-### How the Research toggle changes the data flow
+### Reading: local first, Claude only when needed (no toggle)
 
-- **OFF (fast, local-leaning):** read pay-item boxes, exact-match to cover-sheet
-  rows, pull the material code straight from the crosswalk. Text-layer pages never
-  leave the machine. Quick passes for clean packets.
-- **ON (deeper):** sanity-check the assigned material code against what the cert
-  *describes* and flag mismatches. The canonical example — the conductor-count
-  rule: a description reading `… 3C` should map to `301x3`; if the crosswalk
-  assigned `30102`, it's flagged. `confirmed` rows are authoritative and are
-  **never** auto-flagged (e.g. CONC FDN → `31601` is correct: the ground rod is the
-  certifiable component). Research targets `suggested` and `research`/NULL rows.
+There's no "use Claude" switch. The tool reads the text layer locally first; it
+escalates to Claude **automatically** only when a page needs more power:
+
+- **Cover sheet** — parsed locally; if the local read isn't trustworthy (no text
+  layer, missing quantities, no clear quantity column), Claude reads the cover image
+  to get accurate quantities, the contract, and the inspector's stamped date.
+- **Cert pages** — text-layer pages read locally; image-only/scanned pages are OCR'd
+  by Claude automatically.
+
+If no API key is linked, everything still runs on the local text layer (with a
+warning that messy/scanned packets may be incomplete).
+
+### Research mode (real research, with web search)
+
+When **Research** is on, after the split Claude works each material group and
+**cross-checks three sources**, flagging any disagreement:
+
+1. what the **pay-item description** says (e.g. `2C` = 2 conductors),
+2. what the **uploaded cert** actually states, and
+3. what the **manufacturer's datasheet** says — found live via **web search**
+   (Service Wire, Advanced Digital Cable, Southwire, …).
+
+If the description says `2C` but the datasheet shows a single conductor, that's a
+**mismatch** and it's flagged with the likely-correct code (one click to apply +
+remember). Datasheets it finds can be **saved into a local reference library**
+(downloaded via a proxy) for future reference — reference-only, never merged into an
+output file. `confirmed` crosswalk rows stay authoritative.
 
 ---
 
@@ -140,8 +158,13 @@ node scripts/import-master.mjs path/to/Manual_for_Materials_Inspection_Electrica
   covers, page count, and a pending/confirmed status.
 - **Inline PDF viewer** — flip through each generated file in-app (cover on top,
   matched certs underneath); no download required to verify.
-- **Page reassignment** — pages that landed in the wrong group can be removed; any
-  unassigned page can be added to the open file.
+- **Full-page preview** — click any page (assigned or uncategorized) to see it
+  full-size in a lightbox, and assign it from there.
+- **Add / edit pages** — each file has an "Add / edit pages" picker showing every
+  page; check the ones that belong. Adding a page **moves** it here and removes it
+  from any other file it was wrongly in.
+- **Uncategorized pages** — pages that matched no pay item are listed for easy
+  assignment to any file (or a new one).
 - **Rename inline** — edit the filename directly.
 - **Copyable data table** — per pay item: quantity, material code, pay-item #,
   description. **Quantity is a prominent click-to-copy cell** (it's the field keyed
@@ -188,8 +211,9 @@ two ways to supply a key:
 Optional: `ANTHROPIC_BASE_URL` overrides the API base (defaults to
 `https://api.anthropic.com`).
 
-Models: chat / challenge / research use `claude-opus-4-8`; image-only OCR uses
-`claude-sonnet-4-6`.
+Models: cover-reading / OCR, chat / challenge, and research all use
+`claude-opus-4-8`. Research and challenges use Anthropic's server-side **web
+search** tool to find manufacturer datasheets.
 
 ---
 
