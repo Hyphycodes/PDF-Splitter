@@ -9,8 +9,10 @@ import type {
   PayItemCrosswalk,
   GroupRow,
   ResearchSource,
+  CoverRow,
 } from "@/lib/types";
 import { buildGroupPdf, buildZip, downloadBytes, triggerDownload, safeName } from "@/lib/build";
+import { autoName, buildGroupRow } from "@/lib/match";
 import { upsertCrosswalk } from "@/lib/db";
 import { renderPageJpeg } from "@/lib/pdf";
 import { runResearch, saveReferenceFromSource } from "@/lib/researchClient";
@@ -30,6 +32,8 @@ import {
   GlobeIcon,
   LinkIcon,
   SearchIcon,
+  TrashIcon,
+  ChatIcon,
 } from "./Icons";
 
 type SaveState = "idle" | "saving" | "saved";
@@ -42,7 +46,6 @@ interface Props {
   crosswalk: PayItemCrosswalk[];
   research: boolean;
   keyAvailable: boolean;
-  projectName: string;
   onRenameProject: (name: string) => void;
   saveState: SaveState;
   onReset: () => void;
@@ -58,7 +61,6 @@ export default function ReviewView({
   crosswalk,
   research,
   keyAvailable,
-  projectName,
   onRenameProject,
   saveState,
   onReset,
@@ -73,14 +75,28 @@ export default function ReviewView({
   const [lightbox, setLightbox] = useState<{ index: number; assign: boolean } | null>(null);
   const [editingPages, setEditingPages] = useState(false);
   const [savedRefs, setSavedRefs] = useState<Set<string>>(new Set());
+  const [contract, setContract] = useState(result.contract);
+  const [date, setDate] = useState(result.date);
   const startedResearch = useRef<Set<string>>(new Set());
 
   // Reset local state when a different inspection is opened.
   useEffect(() => {
     setGroups(result.groups);
     setSelectedId(result.groups[0]?.id ?? "");
+    setContract(result.contract);
+    setDate(result.date);
     startedResearch.current = new Set();
   }, [result]);
+
+  const crosswalkMap = useMemo(() => new Map(crosswalk.map((c) => [c.pay_item, c])), [crosswalk]);
+  const coverMap = useMemo(() => new Map(result.coverRows.map((r) => [r.pay_item, r])), [result.coverRows]);
+  const coverOrder = useMemo(() => {
+    const m = new Map<string, number>();
+    result.coverRows.forEach((r, i) => !m.has(r.pay_item) && m.set(r.pay_item, i));
+    return m;
+  }, [result.coverRows]);
+  const orderOf = (pi: string) => coverOrder.get(pi) ?? 10000;
+  const fileName = (payItems: string[]) => autoName(contract, date, payItems);
 
   // Research mode: verify each material against the cert + a manufacturer datasheet.
   useEffect(() => {
@@ -159,6 +175,91 @@ export default function ReviewView({
     );
   }
 
+  // ---- Project / date — applies to every file's name ------------------------
+  function applyProjectDate(c: string, d: string) {
+    setContract(c);
+    setDate(d);
+    setGroups((gs) => gs.map((g) => ({ ...g, filename: autoName(c, d, g.payItems) })));
+    onRenameProject(`${c || "CONTRACT"}_${d || "DATE"}`);
+  }
+
+  // ---- Pay-item rows (top list) ---------------------------------------------
+  function newRow(payItem: string): GroupRow {
+    return buildGroupRow(payItem, coverMap, crosswalkMap, new Map(materials.map((m) => [m.material_code, m])), research);
+  }
+
+  function addPayItemRow(groupId: string, payItem: string) {
+    if (!payItem) return;
+    update(groupId, (g) => {
+      if (g.payItems.includes(payItem)) return g; // each pay item once per file
+      const payItems = [...g.payItems, payItem].sort((a, b) => orderOf(a) - orderOf(b));
+      return {
+        ...g,
+        payItems,
+        rows: [...g.rows, newRow(payItem)].sort((a, b) => orderOf(a.pay_item) - orderOf(b.pay_item)),
+        filename: fileName(payItems),
+        materialCode: g.materialCode,
+        status: "pending",
+      };
+    });
+  }
+
+  function deletePayItemRow(groupId: string, payItem: string) {
+    update(groupId, (g) => {
+      const payItems = g.payItems.filter((p) => p !== payItem);
+      const rows = g.rows.filter((r) => r.pay_item !== payItem);
+      return {
+        ...g,
+        payItems,
+        rows,
+        filename: fileName(payItems),
+        materialCode: rows.find((r) => r.material_code)?.material_code ?? null,
+        status: "pending",
+      };
+    });
+  }
+
+  function setRowMaterial(groupId: string, payItem: string, code: string) {
+    const c = code || null;
+    update(groupId, (g) => {
+      const rows = g.rows.map((r) => (r.pay_item === payItem ? { ...r, material_code: c, suggestion: undefined, flag: undefined } : r));
+      return { ...g, rows, materialCode: rows.find((r) => r.material_code)?.material_code ?? null };
+    });
+    const row = groups.find((g) => g.id === groupId)?.rows.find((r) => r.pay_item === payItem);
+    if (c) {
+      upsertCrosswalk({
+        pay_item: payItem,
+        pay_item_description: row?.description || "",
+        material_code: c,
+        confidence: 1,
+        source: "confirmed",
+      });
+    }
+  }
+
+  // Pay items on the cover that have no cert pages yet (missing certs).
+  const usedPayItems = useMemo(() => new Set(groups.flatMap((g) => g.payItems)), [groups]);
+  const missingPayItems = result.coverRows.map((r) => r.pay_item).filter((pi) => !usedPayItems.has(pi));
+
+  function createGroupForPayItem(payItem: string, idx: number) {
+    const newGroup: OutputGroup = {
+      id: `g_pi_${payItem}_${groups.length}`,
+      materialCode: newRow(payItem).material_code,
+      materialDescription: coverMap.get(payItem)?.description || crosswalkMap.get(payItem)?.pay_item_description || "Material",
+      payItems: [payItem],
+      pageIndexes: [idx],
+      filename: fileName([payItem]),
+      status: "pending",
+      rows: [newRow(payItem)],
+    };
+    // ensure the page isn't left in another file
+    setGroups((gs) => [
+      ...gs.map((g) => (g.pageIndexes.includes(idx) ? { ...g, pageIndexes: g.pageIndexes.filter((i) => i !== idx) } : g)),
+      newGroup,
+    ]);
+    setSelectedId(newGroup.id);
+  }
+
   // ---- Research --------------------------------------------------------------
   async function runGroupResearch(group: OutputGroup) {
     if (!doc) return;
@@ -215,33 +316,22 @@ export default function ReviewView({
   // Create a brand-new output file from a single (uncategorized) page.
   function createGroupFromPage(idx: number) {
     const page = result.pages.find((p) => p.index === idx);
-    const cwMap = new Map(crosswalk.map((c) => [c.pay_item, c]));
-    const coverMap = new Map(result.coverRows.map((r) => [r.pay_item, r]));
-    const payItems = page?.payItems ?? [];
-    const firstCode = payItems.map((pi) => cwMap.get(pi)?.material_code).find(Boolean) ?? null;
-    const rows: GroupRow[] = payItems.map((pi) => {
-      const cover = coverMap.get(pi);
-      const cw = cwMap.get(pi);
-      return {
-        pay_item: pi,
-        description: cover?.description || cw?.pay_item_description || "",
-        quantity: cover?.quantity || "",
-        uom: cover?.uom || "",
-        material_code: cw?.material_code ?? null,
-      };
-    });
-    const label = payItems.length ? payItems.join("-") : `page${idx + 1}`;
+    const payItems = [...new Set(page?.payItems ?? [])].sort((a, b) => orderOf(a) - orderOf(b));
+    const rows = payItems.map((pi) => newRow(pi));
     const newGroup: OutputGroup = {
       id: `g_new_${idx}_${groups.length}`,
-      materialCode: firstCode,
-      materialDescription: firstCode ? materialMap.get(firstCode)?.description ?? "" : "New file",
+      materialCode: rows.find((r) => r.material_code)?.material_code ?? null,
+      materialDescription: rows.length ? "Material" : "New file",
       payItems,
       pageIndexes: [idx],
-      filename: `${result.contract || "CONTRACT"}_${result.date || "DATE"}_${label}.pdf`,
+      filename: fileName(payItems),
       status: "pending",
       rows,
     };
-    setGroups((gs) => [...gs, newGroup]);
+    setGroups((gs) => [
+      ...gs.map((g) => (g.pageIndexes.includes(idx) ? { ...g, pageIndexes: g.pageIndexes.filter((i) => i !== idx) } : g)),
+      newGroup,
+    ]);
     setSelectedId(newGroup.id);
   }
 
@@ -298,7 +388,7 @@ export default function ReviewView({
     }
   }
 
-  const folderName = safeName(projectName || `${result.contract}_${result.date}`);
+  const folderName = safeName(`${contract || "CONTRACT"}_${date || "DATE"}`);
 
   async function downloadAllZip() {
     if (!groups.length) return;
@@ -326,18 +416,29 @@ export default function ReviewView({
             <span className="hidden sm:inline">New packet</span>
           </button>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="hidden text-xs font-medium text-ink-faint sm:inline">Project</span>
-              <input
-                value={projectName}
-                onChange={(e) => onRenameProject(e.target.value)}
-                placeholder="project_date"
-                className="w-40 truncate rounded-lg border border-transparent bg-transparent px-1.5 py-1 font-mono text-sm font-semibold text-ink hover:border-slate-200 focus:border-brand-400 focus:bg-white sm:w-56"
-              />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <label className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Project</span>
+                <input
+                  value={contract}
+                  onChange={(e) => applyProjectDate(e.target.value, date)}
+                  placeholder="62P93"
+                  className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 font-mono text-sm font-semibold text-ink focus:border-brand-400"
+                />
+              </label>
+              <label className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Date</span>
+                <input
+                  value={date}
+                  onChange={(e) => applyProjectDate(contract, e.target.value)}
+                  placeholder="062226"
+                  className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1 font-mono text-sm font-semibold text-ink focus:border-brand-400"
+                />
+              </label>
               <SaveBadge state={saveState} />
             </div>
-            <div className="px-1.5 text-[11px] text-ink-faint">
-              {groups.length} files · {confirmedCount} confirmed · saved to history automatically
+            <div className="mt-0.5 text-[11px] text-ink-faint">
+              Applies to every file · {groups.length} files · {confirmedCount} confirmed · auto-saved
             </div>
           </div>
         </div>
@@ -362,6 +463,17 @@ export default function ReviewView({
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[320px_1fr]">
         {/* File list */}
         <aside className="min-h-0 overflow-y-auto border-r border-slate-200 bg-slate-50/60 p-3">
+          {missingPayItems.length > 0 && (
+            <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
+              <div className="flex items-center gap-1.5 font-semibold">
+                <AlertIcon width={13} height={13} /> {missingPayItems.length} pay item{missingPayItems.length > 1 ? "s have" : " has"} no certs yet
+              </div>
+              <div className="mt-1 font-mono text-[11px] leading-relaxed">{missingPayItems.join(", ")}</div>
+              <div className="mt-1 text-[11px] text-amber-700">
+                Assign an uncategorized page below to one of these instead of making a new file.
+              </div>
+            </div>
+          )}
           <div className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
             Output files
           </div>
@@ -408,7 +520,8 @@ export default function ReviewView({
                 {unassigned.length} uncategorized page{unassigned.length > 1 ? "s" : ""}
               </div>
               <p className="px-1 pb-2 text-[11px] text-ink-faint">
-                These didn’t match a pay item. Assign each to a file (or start a new one).
+                These didn’t match a pay item box. Assign each to a file — or to a pay item from the cover
+                that’s still missing its certs.
               </p>
               <div className="flex flex-col gap-2">
                 {unassigned.map((p) => (
@@ -431,16 +544,30 @@ export default function ReviewView({
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v === "__new__") createGroupFromPage(p.index);
+                          else if (v.startsWith("pi:")) createGroupForPayItem(v.slice(3), p.index);
                           else if (v) addPage(v, p.index);
                         }}
                         className="mt-1 w-full rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] focus:border-brand-400"
                       >
                         <option value="">Assign to…</option>
-                        {groups.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.filename}
-                          </option>
-                        ))}
+                        {groups.length > 0 && (
+                          <optgroup label="Existing files">
+                            {groups.map((g) => (
+                              <option key={g.id} value={g.id}>
+                                {g.filename}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {missingPayItems.length > 0 && (
+                          <optgroup label="Missing certs for pay item">
+                            {missingPayItems.map((pi) => (
+                              <option key={pi} value={`pi:${pi}`}>
+                                {pi} — {coverMap.get(pi)?.description || ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
                         <option value="__new__">＋ New file from this page</option>
                       </select>
                     </div>
@@ -510,9 +637,10 @@ export default function ReviewView({
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-ink-faint">
                       <th className="px-4 py-2.5 font-semibold">Quantity</th>
-                      <th className="px-4 py-2.5 font-semibold">Material</th>
+                      <th className="px-4 py-2.5 font-semibold">Material code</th>
                       <th className="px-4 py-2.5 font-semibold">Pay item</th>
                       <th className="px-4 py-2.5 font-semibold">Description</th>
+                      <th className="px-2 py-2.5"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -536,7 +664,20 @@ export default function ReviewView({
                             {row.uom && <div className="mt-1 text-[11px] text-ink-faint">{row.uom}</div>}
                           </td>
                           <td className="px-4 py-3">
-                            <span className="font-mono font-medium text-ink">{row.material_code ?? "—"}</span>
+                            <select
+                              value={row.material_code ?? ""}
+                              onChange={(e) => setRowMaterial(selected.id, row.pay_item, e.target.value)}
+                              className={`w-full max-w-[180px] rounded-lg border px-2 py-1.5 font-mono text-xs focus:border-brand-400 ${
+                                row.material_code ? "border-slate-200 text-ink" : "border-amber-300 bg-amber-50 text-amber-700"
+                              }`}
+                            >
+                              <option value="">Select…</option>
+                              {materials.map((m) => (
+                                <option key={m.material_code} value={m.material_code}>
+                                  {m.material_code} — {m.description}
+                                </option>
+                              ))}
+                            </select>
                           </td>
                           <td className="px-4 py-3 font-mono text-ink-soft">{row.pay_item}</td>
                           <td className="px-4 py-3 text-ink-soft">
@@ -579,11 +720,28 @@ export default function ReviewView({
                               </div>
                             )}
                           </td>
+                          <td className="px-2 py-3 text-right align-top">
+                            <button
+                              onClick={() => deletePayItemRow(selected.id, row.pay_item)}
+                              title="Remove this pay item from the file"
+                              className="rounded-md p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-600"
+                            >
+                              <TrashIcon width={14} height={14} />
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
+                {/* Add a pay item to this file */}
+                <AddPayItemRow
+                  options={result.coverRows
+                    .map((r) => r.pay_item)
+                    .filter((pi) => !selected.payItems.includes(pi))}
+                  coverMap={coverMap}
+                  onAdd={(pi) => addPayItemRow(selected.id, pi)}
+                />
               </div>
 
               {/* Research panel */}
@@ -594,6 +752,7 @@ export default function ReviewView({
                 onRun={() => runGroupResearch(selected)}
                 onApplyCode={(code) => applyResearchCode(selected, code)}
                 onSaveRef={(src) => saveRef(src, [selected.materialCode ?? "", ...selected.payItems].filter(Boolean))}
+                onDiscuss={() => onChallenge(selected)}
               />
 
               {/* Assigned pages (reassignment) */}
@@ -655,7 +814,7 @@ export default function ReviewView({
         actions={
           lightbox?.assign ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-white/80">Assign this page to:</span>
+              <span className="text-xs text-white/80">Assign to file:</span>
               {groups.map((g) => (
                 <button
                   key={g.id}
@@ -669,6 +828,23 @@ export default function ReviewView({
                   {g.filename}
                 </button>
               ))}
+              {missingPayItems.length > 0 && (
+                <>
+                  <span className="ml-1 text-xs text-amber-300">or missing pay item:</span>
+                  {missingPayItems.map((pi) => (
+                    <button
+                      key={pi}
+                      onClick={() => {
+                        createGroupForPayItem(pi, lightbox.index);
+                        setLightbox(null);
+                      }}
+                      className="rounded-md bg-amber-500/20 px-2.5 py-1 text-xs font-medium text-amber-100 hover:bg-amber-600"
+                    >
+                      {pi}
+                    </button>
+                  ))}
+                </>
+              )}
               <button
                 onClick={() => {
                   createGroupFromPage(lightbox.index);
@@ -788,6 +964,7 @@ function ResearchPanel({
   onRun,
   onApplyCode,
   onSaveRef,
+  onDiscuss,
 }: {
   group: OutputGroup;
   keyAvailable: boolean;
@@ -795,6 +972,7 @@ function ResearchPanel({
   onRun: () => void;
   onApplyCode: (code: string) => void;
   onSaveRef: (src: ResearchSource) => void;
+  onDiscuss: () => void;
 }) {
   const r = group.research;
   const v = r?.verdict ? VERDICT_STYLE[r.verdict] : null;
@@ -805,15 +983,25 @@ function ResearchPanel({
           <GlobeIcon width={16} height={16} className="text-brand-600" /> Research
           {v && <span className={`chip ${v.chip}`}>{v.label}</span>}
         </div>
-        <button
-          className="btn-subtle px-3 py-1.5 text-xs"
-          disabled={!keyAvailable || r?.status === "pending"}
-          onClick={onRun}
-          title={keyAvailable ? "Verify against the cert + manufacturer datasheet" : "Link an API key to use research"}
-        >
-          <SearchIcon width={14} height={14} />
-          {r?.status === "pending" ? "Researching…" : r ? "Re-research" : "Research this material"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            className="btn-subtle px-3 py-1.5 text-xs"
+            disabled={!keyAvailable}
+            onClick={onDiscuss}
+            title="Chat with Claude about these findings right now"
+          >
+            <ChatIcon width={14} height={14} /> Discuss
+          </button>
+          <button
+            className="btn-subtle px-3 py-1.5 text-xs"
+            disabled={!keyAvailable || r?.status === "pending"}
+            onClick={onRun}
+            title={keyAvailable ? "Verify against the cert + manufacturer datasheet" : "Link an API key to use research"}
+          >
+            <SearchIcon width={14} height={14} />
+            {r?.status === "pending" ? "Researching…" : r ? "Re-research" : "Research this material"}
+          </button>
+        </div>
       </div>
 
       {!r && (
@@ -963,6 +1151,46 @@ function PageManager({
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+function AddPayItemRow({
+  options,
+  coverMap,
+  onAdd,
+}: {
+  options: string[];
+  coverMap: Map<string, CoverRow>;
+  onAdd: (pi: string) => void;
+}) {
+  const [val, setVal] = useState("");
+  if (!options.length) return null;
+  return (
+    <div className="flex items-center gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-2.5">
+      <PlusIcon width={14} height={14} className="shrink-0 text-ink-faint" />
+      <select
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs focus:border-brand-400"
+      >
+        <option value="">Add a pay item from the cover…</option>
+        {options.map((pi) => (
+          <option key={pi} value={pi}>
+            {pi} — {coverMap.get(pi)?.description || ""}
+          </option>
+        ))}
+      </select>
+      <button
+        disabled={!val}
+        onClick={() => {
+          onAdd(val);
+          setVal("");
+        }}
+        className="shrink-0 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+      >
+        Add
+      </button>
     </div>
   );
 }

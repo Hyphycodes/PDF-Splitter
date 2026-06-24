@@ -243,7 +243,14 @@ export default function AppShell() {
     const [matMap, cwMap] = await Promise.all([getMaterialMap(), getCrosswalkMap()]);
     const refs = [group.materialCode ?? "", ...group.payItems].filter(Boolean);
     const relevantNotes = await getRelevantNotes(refs);
-    const contextText = buildGroupContext(group, matMap, cwMap, relevantNotes);
+    let contextText = buildGroupContext(group, matMap, cwMap, relevantNotes);
+    if (group.research?.status === "done" && group.research.summary) {
+      contextText +=
+        `\n\nPRIOR RESEARCH FINDINGS (verdict: ${group.research.verdict ?? "?"}): ${group.research.summary}` +
+        (group.research.sources?.length
+          ? `\nSources found: ${group.research.sources.map((s) => s.url).join(", ")}`
+          : "");
+    }
 
     const ordered = [
       ...(result?.coverIndex != null ? [result.coverIndex] : []),
@@ -339,7 +346,6 @@ export default function AppShell() {
           crosswalk={crosswalk}
           research={research}
           keyAvailable={serverKey || !!apiKey}
-          projectName={projectName}
           onRenameProject={renameProject}
           saveState={saveState}
           onReset={reset}

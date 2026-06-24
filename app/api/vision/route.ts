@@ -20,10 +20,13 @@ function dataUrlToParts(dataUrl: string): { media_type: string; data: string } |
 
 const OCR_PROMPT =
   "You are reading a single page from an electrical materials inspection certification packet " +
-  "(mill cert, BOL, coating cert, or catalog cut). Find the PAY ITEM number(s) on this page — " +
-  "they are usually stamped or hand-written in a box. A pay-item number is 8 characters: either " +
+  "(mill cert, BOL, coating cert, or catalog cut). Find ALL PAY ITEM number(s) on this page — " +
+  "they are usually stamped or hand-written in a box. IMPORTANT: the pay-item box is OFTEN ROTATED " +
+  "(sideways / vertical, 90° or 270°) even when the rest of the page is upright — read text in every " +
+  "orientation and check the page margins and corners. A pay-item number is 8 characters: either " +
   "8 digits (e.g. 87301225) or an 'X'/'Z' followed by 7 alphanumerics (e.g. X8780012). A page may " +
-  'carry more than one. Respond with ONLY JSON: {"payItems":["87301225"]}. If none, {"payItems":[]}.';
+  "carry MORE THAN ONE (a box can list several). Return every one you see. " +
+  'Respond with ONLY JSON: {"payItems":["87301225","87301245"]}. If none, {"payItems":[]}.';
 
 const COVER_PROMPT =
   "This is the COVER SHEET (an IDOT 'IL OKAY LOG' / materials summary) of an electrical inspection " +

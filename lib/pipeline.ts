@@ -139,17 +139,17 @@ export async function runPipeline(
     let payItems = findPayItems(t.text);
     let readMode: CertPage["readMode"] = t.hasTextLayer ? "text-layer" : "none";
 
-    // Auto-OCR any cert page that has no usable text layer.
-    if (!isCover && !t.hasTextLayer) {
-      if (ai) {
-        onProgress?.({ phase: "Reading scanned pages with Claude", current: t.index + 1, total: numPages });
-        const pageImage = await renderPage(doc, t.index + 1, OCR_WIDTH);
-        const { data, error } = await ocrPayItems(pageImage);
-        if (error) ocrErrors++;
-        if (data.length) {
-          payItems = data;
-          readMode = "vision";
-        }
+    // Escalate to Claude OCR whenever a cert page yields no pay item locally.
+    // This covers scanned pages AND pages whose pay-item box is rotated/sideways
+    // (the text layer reads the rest of the cert but misses the turned stamp).
+    if (!isCover && payItems.length === 0 && ai) {
+      onProgress?.({ phase: "Reading pay-item boxes with Claude", current: t.index + 1, total: numPages });
+      const pageImage = await renderPage(doc, t.index + 1, OCR_WIDTH);
+      const { data, error } = await ocrPayItems(pageImage);
+      if (error) ocrErrors++;
+      if (data.length) {
+        payItems = data;
+        readMode = "vision";
       }
     }
 

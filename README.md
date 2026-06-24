@@ -22,8 +22,12 @@ pages for a pay item → extract → rename → repeat ~20×*.
    on a cert == `87301225` on the cover sheet, those pages belong together. The
    only unreliable step is reading the number off a messy scan; everything
    downstream of a correct read is exact.
-5. **Group** — assign cert pages to material groups via the pay-item → material-code
-   crosswalk. Pay items that share a material code collapse into **one** output file.
+5. **Group by the pay-item box** — pages that carry the **same set of pay items**
+   belong to the same cert and go into **one** output file. This covers multi-page
+   certs (the box repeats on each page) and certs whose box lists several pay items
+   at once — every one of those pay items is named in the file and listed at the top.
+   Pay-item boxes are often rotated/sideways; Claude reads pages in any orientation
+   when the local text layer misses the box.
 6. **Build output PDFs** — for each group: page 1 = the cover sheet, then the matched
    cert pages in order. The cover sheet is in **every** output file (the inspector
    needs it for the quantities).
@@ -86,7 +90,8 @@ If the description says `2C` but the datasheet shows a single conductor, that's 
 **mismatch** and it's flagged with the likely-correct code (one click to apply +
 remember). Datasheets it finds can be **saved into a local reference library**
 (downloaded via a proxy) for future reference — reference-only, never merged into an
-output file. `confirmed` crosswalk rows stay authoritative.
+output file. You can also **Discuss the findings with Claude right away** (not only
+save them). `confirmed` crosswalk rows stay authoritative.
 
 ---
 
@@ -166,6 +171,14 @@ node scripts/import-master.mjs path/to/Manual_for_Materials_Inspection_Electrica
 - **Uncategorized pages** — pages that matched no pay item are listed for easy
   assignment to any file (or a new one).
 - **Rename inline** — edit the filename directly.
+- **Project + date bar** — edit the project number and date once at the top; the
+  change applies to **every** file's name.
+- **Editable pay-item list** — add or remove pay items on a file (add picks from the
+  cover list and updates the filename); each pay item is used once per file.
+- **Material code is always populated** and editable per row via a dropdown.
+- **Missing-cert awareness** — the tool knows every pay item on the cover, so it
+  flags pay items with no cert pages yet and lets you assign a stray page to one of
+  them instead of making a new file.
 - **Copyable data table** — per pay item: quantity, material code, pay-item #,
   description. **Quantity is a prominent click-to-copy cell** (it's the field keyed
   into CMMS).
