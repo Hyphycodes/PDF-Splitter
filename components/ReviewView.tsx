@@ -186,6 +186,13 @@ export default function ReviewView({
         </button>
       </div>
 
+      {result.warnings && result.warnings.length > 0 && (
+        <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-5 py-2 text-xs text-amber-800">
+          <AlertIcon width={14} height={14} className="mt-0.5 shrink-0" />
+          <div>{result.warnings.join(" ")}</div>
+        </div>
+      )}
+
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[320px_1fr]">
         {/* File list */}
         <aside className="min-h-0 overflow-y-auto border-r border-slate-200 bg-slate-50/60 p-3">

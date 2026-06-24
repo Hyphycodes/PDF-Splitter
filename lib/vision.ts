@@ -1,6 +1,7 @@
-// Client helpers for the one place an API earns its keep: image-only cert pages
-// (OCR the stamped pay-item box) and research-mode verification. Only a single
-// page image is ever sent — never the whole packet.
+// Client helpers for reading scanned pages with Claude. Only single page images
+// are ever sent. Text-layer pages are read locally and never transmitted.
+
+import type { CoverRow } from "./types";
 
 export function getApiKey(): string {
   if (typeof window === "undefined") return "";
@@ -13,20 +14,55 @@ export function setApiKey(key: string) {
   else window.localStorage.removeItem("anthropic_api_key");
 }
 
-/** Read pay-item number(s) off a scanned page image. Returns [] on any failure. */
-export async function ocrPayItems(pngDataUrl: string): Promise<string[]> {
-  const apiKey = getApiKey();
-  if (!apiKey) return [];
+export interface OcrResult<T> {
+  data: T;
+  error?: string;
+}
+
+/** Read pay-item number(s) off a scanned cert page. */
+export async function ocrPayItems(pngDataUrl: string): Promise<OcrResult<string[]>> {
   try {
     const res = await fetch("/api/vision", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "ocr", apiKey, image: pngDataUrl }),
+      body: JSON.stringify({ mode: "ocr", apiKey: getApiKey(), image: pngDataUrl }),
     });
-    if (!res.ok) return [];
     const data = await res.json();
-    return Array.isArray(data.payItems) ? data.payItems : [];
-  } catch {
-    return [];
+    if (!res.ok) return { data: [], error: data?.error || `OCR failed (${res.status})` };
+    return { data: Array.isArray(data.payItems) ? data.payItems : [] };
+  } catch (e) {
+    return { data: [], error: String(e) };
+  }
+}
+
+export interface CoverExtract {
+  contract: string;
+  date: string;
+  rows: CoverRow[];
+}
+
+/** Read the full cover-sheet table (rows + date + contract) from its image. */
+export async function ocrCover(imageDataUrl: string, hintText?: string): Promise<OcrResult<CoverExtract>> {
+  const empty: CoverExtract = { contract: "", date: "", rows: [] };
+  try {
+    const res = await fetch("/api/vision", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "cover", apiKey: getApiKey(), image: imageDataUrl, hintText }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { data: empty, error: data?.error || `Cover read failed (${res.status})` };
+    const rows: CoverRow[] = Array.isArray(data.rows)
+      ? data.rows.map((r: Record<string, unknown>) => ({
+          pay_item: String(r.pay_item ?? "").trim(),
+          description: String(r.description ?? "").trim(),
+          quantity: String(r.quantity ?? "").trim(),
+          uom: String(r.uom ?? "").trim(),
+          manufacturer: "",
+        }))
+      : [];
+    return { data: { contract: String(data.contract ?? ""), date: String(data.date ?? ""), rows: rows.filter((r) => r.pay_item) } };
+  } catch (e) {
+    return { data: empty, error: String(e) };
   }
 }

@@ -27,10 +27,17 @@ pages for a pay item → extract → rename → repeat ~20×*.
 6. **Build output PDFs** — for each group: page 1 = the cover sheet, then the matched
    cert pages in order. The cover sheet is in **every** output file (the inspector
    needs it for the quantities).
-7. **Auto-name** — `CONTRACT_DATE_MATERIALCODE.pdf`
-   (e.g. `62P93_062226_30103.pdf`), or by joined pay items when unresolved.
-   Editable inline.
-8. **Review** — nothing is final until the inspector confirms each file.
+7. **Auto-name** — `CONTRACT_DATE_PAYITEMS.pdf`
+   (e.g. `62P93_062226_87301225.pdf`, or `…_87301225-87301245.pdf` when a group
+   covers several pay items). The date is the inspector's initialed/stamped date
+   read off the cover. Editable inline.
+8. **Order** — output files follow the order the pay items appear on the cover list.
+9. **Review** — nothing is final until the inspector confirms each file.
+
+The cover sheet is read with Claude (the most capable model) for accurate
+quantities, contract, and date; scanned/image-only cert pages are OCR'd the same
+way. Clean text-layer cert pages are read locally. This all happens automatically —
+no per-run toggling — whenever an Anthropic key is available.
 
 ---
 

@@ -11,6 +11,8 @@ export interface MatchInput {
   pages: CertPage[];
   coverRows: CoverRow[];
   coverIndex: number | null;
+  /** pay item -> position in the cover list (drives output order + filenames) */
+  coverOrder: Map<string, number>;
   crosswalk: Map<string, PayItemCrosswalk>;
   materials: Map<string, MaterialMaster>;
   contract: string;
@@ -34,15 +36,17 @@ function key(materialCode: string | null, payItem: string): string {
   return materialCode ? `MC:${materialCode}` : `PI:${payItem}`;
 }
 
-function autoName(contract: string, date: string, groupLabel: string): string {
+function autoName(contract: string, date: string, payItems: string[]): string {
   const c = contract || "CONTRACT";
   const d = date || "DATE";
-  return `${c}_${d}_${groupLabel}.pdf`;
+  return `${c}_${d}_${payItems.join("-")}.pdf`;
 }
 
 export function matchAndGroup(input: MatchInput): OutputGroup[] {
-  const { pages, coverRows, coverIndex, crosswalk, materials, contract, date, research } = input;
+  const { pages, coverRows, coverIndex, coverOrder, crosswalk, materials, contract, date, research } = input;
   const coverByPayItem = new Map(coverRows.map((r) => [r.pay_item, r]));
+  // Pay items not on the cover sort after those that are, by appearance order.
+  const orderOf = (pi: string) => (coverOrder.has(pi) ? coverOrder.get(pi)! : 10000 + (coverByPayItem.size || 0));
 
   // group key -> working group
   const groups = new Map<
@@ -75,7 +79,8 @@ export function matchAndGroup(input: MatchInput): OutputGroup[] {
   let i = 0;
   for (const [, g] of groups) {
     const material = g.materialCode ? materials.get(g.materialCode) : undefined;
-    const payItems = [...g.payItems].sort();
+    // Pay items ordered by their position on the cover list.
+    const payItems = [...g.payItems].sort((a, b) => orderOf(a) - orderOf(b));
 
     const rows: GroupRow[] = payItems.map((pi) => {
       const cover = coverByPayItem.get(pi);
@@ -111,8 +116,7 @@ export function matchAndGroup(input: MatchInput): OutputGroup[] {
       return row;
     });
 
-    const label = g.materialCode ?? payItems.join("-");
-    const filename = autoName(contract, date, g.materialCode ?? payItems.join("-"));
+    const filename = autoName(contract, date, payItems);
 
     result.push({
       id: `g${i++}`,
@@ -124,15 +128,13 @@ export function matchAndGroup(input: MatchInput): OutputGroup[] {
       status: "pending",
       rows,
     });
-    void label;
   }
 
-  // Stable order: resolved material groups first (by code), unresolved last.
+  // Output order follows the cover list: by each group's earliest pay item.
   result.sort((a, b) => {
-    if (a.materialCode && b.materialCode) return a.materialCode.localeCompare(b.materialCode);
-    if (a.materialCode) return -1;
-    if (b.materialCode) return 1;
-    return a.payItems.join().localeCompare(b.payItems.join());
+    const ao = Math.min(...a.payItems.map(orderOf));
+    const bo = Math.min(...b.payItems.map(orderOf));
+    return ao - bo;
   });
 
   return result;

@@ -6,8 +6,8 @@ import { UploadIcon, FileIcon, ShieldIcon, SparkIcon } from "./Icons";
 interface Props {
   research: boolean;
   setResearch: (v: boolean) => void;
-  useVision: boolean;
-  setUseVision: (v: boolean) => void;
+  aiRead: boolean;
+  setAiRead: (v: boolean) => void;
   apiKey: string;
   setApiKey: (v: string) => void;
   serverKey: boolean;
@@ -17,8 +17,8 @@ interface Props {
 export default function UploadView({
   research,
   setResearch,
-  useVision,
-  setUseVision,
+  aiRead,
+  setAiRead,
   apiKey,
   setApiKey,
   serverKey,
@@ -94,12 +94,12 @@ export default function UploadView({
         />
         <Toggle
           icon={<ShieldIcon className="text-emerald-600" />}
-          title="OCR scanned pages with Claude"
-          desc="Only image-only pages (no text layer) are sent — one page image at a time, never the whole packet. Text-layer pages stay on this machine."
-          checked={useVision}
-          onChange={setUseVision}
+          title="Let Claude read the cover & scanned pages"
+          desc="Reads the cover sheet for accurate quantities + date, and OCRs any scanned/image-only cert page with the most capable model. One page image at a time — text-layer cert pages stay on this machine."
+          checked={aiRead}
+          onChange={setAiRead}
         />
-        {useVision && !serverKey && (
+        {aiRead && !serverKey && (
           <div className="px-5 py-4">
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-faint">
               Anthropic API key
@@ -112,11 +112,11 @@ export default function UploadView({
               className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-mono placeholder:text-slate-400 focus:border-brand-400"
             />
             <p className="mt-1.5 text-xs text-ink-faint">
-              Stored only in this browser (localStorage). Used solely to OCR scanned pages.
+              Stored only in this browser (localStorage). Used to read the cover sheet and scanned pages.
             </p>
           </div>
         )}
-        {useVision && serverKey && (
+        {aiRead && serverKey && (
           <div className="px-5 py-3 text-xs text-emerald-700">
             Anthropic API is linked on this deployment — no key needed.
           </div>
@@ -125,14 +125,15 @@ export default function UploadView({
 
       <button
         className="btn-primary mt-6 w-full py-3 text-base"
-        disabled={!file || (useVision && !keyReady)}
+        disabled={!file}
         onClick={() => file && onRun(file)}
       >
         Split packet
       </button>
-      {useVision && !keyReady && (
+      {aiRead && !keyReady && (
         <p className="mt-2 text-center text-xs text-amber-600">
-          Add an API key, or turn off OCR to run fully local.
+          No API key linked yet — Claude reading needs one for the cover sheet & scanned pages.
+          Add a key above, or it’ll run locally on the text layer only.
         </p>
       )}
 

@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
-// Thin proxy to the Anthropic Messages API (vision). The browser holds the key
-// in localStorage and sends it per-request, so no secret is stored server-side.
-// Only a single page image is ever forwarded.
+// Reads scanned pages with Claude vision. Two modes:
+//   mode "ocr"   -> find the stamped pay-item number(s) on a cert page
+//   mode "cover" -> read the whole IL OKAY LOG cover table (rows + date + contract)
+// Uses the most capable model so a messy scan still reads. Only the single page
+// image is forwarded; the rest of the packet stays local.
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 const ENDPOINT = `${process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com"}/v1/messages`;
 
 function dataUrlToParts(dataUrl: string): { media_type: string; data: string } | null {
@@ -15,14 +18,45 @@ function dataUrlToParts(dataUrl: string): { media_type: string; data: string } |
   return { media_type: m[1], data: m[2] };
 }
 
+const OCR_PROMPT =
+  "You are reading a single page from an electrical materials inspection certification packet " +
+  "(mill cert, BOL, coating cert, or catalog cut). Find the PAY ITEM number(s) on this page — " +
+  "they are usually stamped or hand-written in a box. A pay-item number is 8 characters: either " +
+  "8 digits (e.g. 87301225) or an 'X'/'Z' followed by 7 alphanumerics (e.g. X8780012). A page may " +
+  'carry more than one. Respond with ONLY JSON: {"payItems":["87301225"]}. If none, {"payItems":[]}.';
+
+const COVER_PROMPT =
+  "This is the COVER SHEET (an IDOT 'IL OKAY LOG' / materials summary) of an electrical inspection " +
+  "packet. Read the whole sheet carefully and extract:\n" +
+  "1. The contract number (often like 62P93).\n" +
+  "2. The date it was initialed / stamped by the inspector (the hand-written or stamped date). " +
+  "Return it as MMDDYY (6 digits).\n" +
+  "3. Every pay-item row in the table, IN THE ORDER THEY APPEAR top-to-bottom. For each row capture " +
+  "the pay-item number, the description, the QUANTITY, and the unit of measure.\n" +
+  "Pay-item numbers are 8 characters (8 digits, or a letter + 7). Quantities may have decimals.\n" +
+  'Respond with ONLY JSON: {"contract":"62P93","date":"062226","rows":[{"pay_item":"87301225",' +
+  '"description":"ELCBL C SIGNAL 14 3C","quantity":"1500","uom":"LINFT"}]}. ' +
+  "Use empty strings for anything you genuinely cannot read. No commentary.";
+
+function extractJson(text: string): Record<string, unknown> | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
-  let body: { mode?: string; apiKey?: string; image?: string };
+  let body: { mode?: string; apiKey?: string; image?: string; hintText?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   }
 
+  const mode = body.mode === "cover" ? "cover" : "ocr";
   const { image } = body;
   const apiKey = process.env.ANTHROPIC_API_KEY || body.apiKey;
   if (!apiKey) return NextResponse.json({ error: "missing api key" }, { status: 401 });
@@ -31,13 +65,13 @@ export async function POST(req: NextRequest) {
   const img = dataUrlToParts(image);
   if (!img) return NextResponse.json({ error: "bad image" }, { status: 400 });
 
-  const prompt =
-    "You are reading a single scanned page from an electrical materials inspection " +
-    "certification packet. Find the stamped or hand-boxed PAY ITEM number(s) on this page. " +
-    "Pay-item numbers are 8 characters: either 8 digits (e.g. 87301225) or an 'X' followed " +
-    "by 7 digits (e.g. X8780012). There may be more than one. " +
-    'Respond with ONLY a JSON object: {"payItems": ["87301225", ...]}. ' +
-    "If you cannot find any, respond {\"payItems\": []}. No other text.";
+  const content: unknown[] = [
+    { type: "image", source: { type: "base64", media_type: img.media_type, data: img.data } },
+    { type: "text", text: mode === "cover" ? COVER_PROMPT : OCR_PROMPT },
+  ];
+  if (body.hintText) {
+    content.push({ type: "text", text: `Text layer already extracted from this page (may help):\n${body.hintText.slice(0, 6000)}` });
+  }
 
   try {
     const res = await fetch(ENDPOINT, {
@@ -49,16 +83,8 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 256,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: img.media_type, data: img.data } },
-              { type: "text", text: prompt },
-            ],
-          },
-        ],
+        max_tokens: mode === "cover" ? 2500 : 256,
+        messages: [{ role: "user", content }],
       }),
     });
 
@@ -69,18 +95,20 @@ export async function POST(req: NextRequest) {
 
     const data = await res.json();
     const text: string = data?.content?.map((c: { text?: string }) => c.text || "").join("") ?? "";
-    const match = text.match(/\{[\s\S]*\}/);
-    let payItems: string[] = [];
-    if (match) {
-      try {
-        const parsed = JSON.parse(match[0]);
-        if (Array.isArray(parsed.payItems)) {
-          payItems = parsed.payItems.filter((s: unknown) => typeof s === "string");
-        }
-      } catch {
-        /* fall through */
-      }
+    const parsed = extractJson(text);
+
+    if (mode === "cover") {
+      const rows = Array.isArray(parsed?.rows) ? parsed!.rows : [];
+      return NextResponse.json({
+        contract: typeof parsed?.contract === "string" ? parsed.contract : "",
+        date: typeof parsed?.date === "string" ? parsed.date : "",
+        rows,
+      });
     }
+    const payItems =
+      parsed && Array.isArray(parsed.payItems)
+        ? (parsed.payItems as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
     return NextResponse.json({ payItems });
   } catch (e) {
     return NextResponse.json({ error: "request failed", detail: String(e) }, { status: 502 });

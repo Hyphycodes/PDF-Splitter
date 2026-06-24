@@ -78,6 +78,7 @@ export interface PipelineResult {
   coverRows: CoverRow[];
   pages: CertPage[];
   groups: OutputGroup[];
+  warnings?: string[];
 }
 
 // ---- Saved inspections (history) ------------------------------------------

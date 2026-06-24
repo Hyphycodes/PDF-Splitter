@@ -62,7 +62,7 @@ export default function AppShell() {
 
   // Settings
   const [research, setResearch] = useState(false);
-  const [useVision, setUseVision] = useState(false);
+  const [aiRead, setAiRead] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [serverKey, setServerKey] = useState(false);
 
@@ -111,7 +111,8 @@ export default function AppShell() {
 
       const res = await runPipeline(loaded.doc, loaded.numPages, {
         research,
-        useVision: useVision && (serverKey || !!apiKey),
+        aiRead,
+        keyAvailable: serverKey || !!apiKey,
         filename: file.name,
         onProgress: setProgress,
       });
@@ -292,8 +293,8 @@ export default function AppShell() {
         <UploadView
           research={research}
           setResearch={setResearch}
-          useVision={useVision}
-          setUseVision={setUseVision}
+          aiRead={aiRead}
+          setAiRead={setAiRead}
           apiKey={apiKey}
           setApiKey={setApiKey}
           serverKey={serverKey}
