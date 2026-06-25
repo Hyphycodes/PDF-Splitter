@@ -211,6 +211,36 @@ export async function runPipeline(
     page.needsReview = page.payItems.length === 0;
   }
 
+  // Recovery pass — if any cover pay items still have no page, re-scan every cert
+  // page hunting specifically for the missing ones (the box may list several pay
+  // items and the first read caught only some). Only runs when something's missing.
+  if (ai) {
+    const seen = new Set<string>();
+    pages.forEach((p) => (p.isCoverSheet ? null : p.payItems.forEach((pi) => seen.add(pi))));
+    const missing = coverRows.map((r) => r.pay_item).filter((pi) => !seen.has(pi));
+    if (missing.length) {
+      const certPages = pages.filter((p) => !p.isCoverSheet && p.index !== coverIndex).slice(0, 60);
+      for (let k = 0; k < certPages.length; k++) {
+        const page = certPages[k];
+        onProgress?.({ phase: `Hunting for ${missing.length} missing pay item(s)`, current: k + 1, total: certPages.length });
+        const img = await renderPage(doc, page.index + 1, OCR_WIDTH);
+        const { data } = await ocrPayItems(img, missing);
+        for (const d of data) {
+          let match: string | null = missing.includes(d) ? d : null;
+          if (!match) {
+            const near = missing.filter((m) => withinOneEdit(m, d));
+            if (near.length === 1) match = near[0];
+          }
+          if (match && !page.payItems.includes(match)) {
+            page.payItems.push(match);
+            page.readMode = "vision";
+            page.needsReview = false;
+          }
+        }
+      }
+    }
+  }
+
   if (ocrErrors > 0) warnings.push(`${ocrErrors} scanned page(s) couldn't be read by Claude.`);
   if (!ai) {
     warnings.push("No Anthropic key linked — quantities and scanned pages were read locally and may be incomplete.");

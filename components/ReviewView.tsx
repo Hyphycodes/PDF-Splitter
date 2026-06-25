@@ -595,70 +595,50 @@ export default function ReviewView({
         {/* File list */}
         <aside className="min-h-0 overflow-y-auto border-r border-slate-200 bg-slate-50/60 p-3">
           {missingPayItems.length > 0 && (
-            <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
-              <div className="flex items-center gap-1.5 font-semibold">
-                <AlertIcon width={13} height={13} /> {missingPayItems.length} pay item{missingPayItems.length > 1 ? "s have" : " has"} no certs yet
-              </div>
-              <div className="mt-1 font-mono text-[11px] leading-relaxed">{missingPayItems.join(", ")}</div>
-              <div className="mt-1 text-[11px] text-amber-700">
-                {unassigned.length > 0
-                  ? "Assign an uncategorized page below to one of these instead of making a new file."
-                  : unrecognizedPayItems.length > 0
-                    ? "No loose pages — these were likely read under a wrong number (see below). Open that split, delete the wrong pay-item row, and add the correct one."
-                    : "No cert pages were found for these in the packet. Add the pay item to the right file once you locate its cert."}
-              </div>
-            </div>
+            <button
+              onClick={() => setReviewTab("dashboard")}
+              className="mb-2 flex w-full items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-left text-[11px] text-amber-800 hover:bg-amber-100"
+            >
+              <AlertIcon width={12} height={12} className="shrink-0" />
+              <span className="flex-1">
+                {missingPayItems.length} pay item{missingPayItems.length > 1 ? "s" : ""} missing certs
+              </span>
+              <span className="font-medium">Overview →</span>
+            </button>
           )}
-          {unrecognizedPayItems.length > 0 && (
-            <div className="mb-2 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
-              <div className="flex items-center gap-1.5 font-semibold">
-                <AlertIcon width={13} height={13} /> {unrecognizedPayItems.length} pay item{unrecognizedPayItems.length > 1 ? "s aren't" : " isn't"} on the cover
-              </div>
-              <div className="mt-1 font-mono text-[11px] leading-relaxed">{unrecognizedPayItems.join(", ")}</div>
-              <div className="mt-1 text-[11px] text-rose-600">
-                Probably a misread of a missing pay item above — open the file, fix the pay-item row.
-              </div>
-            </div>
-          )}
-          <div className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-            Output files
+          <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            Files
           </div>
-          <div className="flex flex-col gap-2">
-            {groups.map((g) => (
-              <button
-                key={g.id}
-                onClick={() => setSelectedId(g.id)}
-                className={`w-full rounded-xl border p-3 text-left transition ${
-                  g.id === selectedId
-                    ? "border-brand-300 bg-white shadow-card ring-1 ring-brand-200"
-                    : "border-slate-200 bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-mono text-[12.5px] font-medium text-ink">{g.filename}</span>
-                  {g.status === "confirmed" ? (
-                    <span className="chip bg-emerald-100 text-emerald-700" title="Confirmed">
-                      <LockIcon width={11} height={11} /> confirmed
-                    </span>
-                  ) : (
-                    <span className="chip bg-emerald-50 text-emerald-600" title="Read & ready — confirm to lock">
-                      <CheckIcon width={12} height={12} /> ready
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-faint">
-                  {g.materialCode ? (
-                    <span className="chip bg-brand-50 text-brand-700">code {g.materialCode}</span>
-                  ) : (
-                    <span className="chip bg-rose-50 text-rose-700">
-                      <AlertIcon width={12} height={12} /> unresolved
-                    </span>
-                  )}
-                  <span>{g.pageIndexes.length + (result.coverIndex !== null ? 1 : 0)} pages</span>
-                </div>
-                <div className="mt-1 truncate text-xs text-ink-faint">{g.materialDescription}</div>
-              </button>
-            ))}
+          <div className="flex flex-col gap-1.5">
+            {groups.map((g) => {
+              const pageCount = g.pageIndexes.length + (result.coverIndex !== null ? 1 : 0);
+              const primary = g.materialDescription || "Material";
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => setSelectedId(g.id)}
+                  className={`group w-full rounded-xl border px-3 py-2.5 text-left transition ${
+                    g.id === selectedId
+                      ? "border-brand-300 bg-white shadow-card ring-1 ring-brand-200"
+                      : "border-transparent bg-white hover:border-slate-200"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${
+                        g.status === "confirmed" ? "bg-emerald-500" : g.materialCode ? "bg-emerald-300" : "bg-rose-400"
+                      }`}
+                      title={g.status === "confirmed" ? "Confirmed" : g.materialCode ? "Ready" : "Needs a material code"}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{primary}</span>
+                    {g.status === "confirmed" && <LockIcon width={12} height={12} className="shrink-0 text-emerald-600" />}
+                  </div>
+                  <div className="mt-0.5 truncate pl-4 font-mono text-[11px] text-ink-faint">
+                    {g.payItems.join(" · ")} · {pageCount}p
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           {unassigned.length > 0 && (
