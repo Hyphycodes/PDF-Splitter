@@ -4,6 +4,7 @@
 
 :root {
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 
 html,
@@ -14,6 +15,17 @@ body {
 body {
   @apply bg-slate-50 text-ink antialiased;
   background-image: radial-gradient(60rem 60rem at 110% -10%, rgba(47, 128, 247, 0.06), transparent 60%);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Clearer Inter letterforms (single-story a/g, tabular figures, etc.). */
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  letter-spacing: -0.006em;
+}
+
+/* Codes, pay items, and numbers read clearer with a real mono + tabular figures. */
+.font-mono {
+  font-feature-settings: "tnum";
+  letter-spacing: 0;
 }
 
 /* Smooth, consistent focus + transitions across interactive elements. */

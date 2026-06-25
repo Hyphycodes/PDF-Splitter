@@ -55,7 +55,7 @@ function extractJson(text: string): Record<string, unknown> | null {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { mode?: string; apiKey?: string; image?: string; hintText?: string };
+  let body: { mode?: string; apiKey?: string; image?: string; hintText?: string; candidates?: string[] };
   try {
     body = await req.json();
   } catch {
@@ -71,9 +71,19 @@ export async function POST(req: NextRequest) {
   const img = dataUrlToParts(image);
   if (!img) return NextResponse.json({ error: "bad image" }, { status: 400 });
 
+  let prompt = mode === "cover" ? COVER_PROMPT : OCR_PROMPT;
+  if (mode === "ocr" && body.candidates?.length) {
+    prompt +=
+      "\n\nThese pay-item numbers are listed on the cover sheet for this packet, so the box on this " +
+      "page is almost certainly ONE (or a few) of them — match what you see to this list, and prefer " +
+      "an exact match from it when a digit is smudged or rotated:\n" +
+      body.candidates.slice(0, 60).join(", ") +
+      "\nStill report any 8-character pay-item number you see even if it isn't on this list.";
+  }
+
   const content: unknown[] = [
     { type: "image", source: { type: "base64", media_type: img.media_type, data: img.data } },
-    { type: "text", text: mode === "cover" ? COVER_PROMPT : OCR_PROMPT },
+    { type: "text", text: prompt },
   ];
   if (body.hintText) {
     content.push({ type: "text", text: `Text layer already extracted from this page (may help):\n${body.hintText.slice(0, 6000)}` });

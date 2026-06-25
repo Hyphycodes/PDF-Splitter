@@ -102,52 +102,35 @@ export default function AllPagesGrid({
                   )}
                 </button>
 
-                <div className="p-2.5">
-                  <div className="mb-1.5 flex flex-wrap gap-1">
-                    {p.payItems.length ? (
-                      p.payItems.map((pi) => (
-                        <span key={pi} className="chip bg-slate-100 font-mono text-[10px] text-ink-soft">
-                          {pi}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-[11px] text-ink-faint">No pay item read on this page</span>
-                    )}
-                  </div>
-
-                  {g && (
-                    <button
-                      onClick={() => onSelectFile(g.id)}
-                      className="mb-1.5 block w-full truncate text-left font-mono text-[11px] text-brand-700 hover:underline"
-                      title={g.filename}
-                    >
-                      → {g.filename}
-                    </button>
-                  )}
-
+                <div className="p-3">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                    Assigned to
+                  </label>
                   <select
-                    value=""
+                    value={g?.id ?? ""}
                     onChange={(e) => {
                       const v = e.target.value;
-                      if (v === "__unassign__") onUnassign(p.index);
+                      if (v === "") onUnassign(p.index);
                       else if (v === "__new__") onNewFile(p.index);
                       else if (v.startsWith("pi:")) onAssignPayItem(p.index, v.slice(3));
-                      else if (v) onAssignGroup(p.index, v);
+                      else onAssignGroup(p.index, v);
                     }}
-                    className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[11px] focus:border-brand-400"
+                    className={`w-full rounded-lg border px-2.5 py-2 text-xs font-medium focus:border-brand-400 ${
+                      g ? "border-slate-200 text-ink" : "border-rose-200 bg-rose-50 text-rose-700"
+                    }`}
                   >
-                    <option value="">{g ? "Move to…" : "Assign to…"}</option>
+                    <option value="">— Unassigned —</option>
                     {groups.length > 0 && (
                       <optgroup label="Files">
                         {groups.map((gr) => (
                           <option key={gr.id} value={gr.id}>
-                            {gr.payItems.join("-") || gr.filename}
+                            {gr.payItems.join(" · ") || gr.filename}
                           </option>
                         ))}
                       </optgroup>
                     )}
                     {missingPayItems.length > 0 && (
-                      <optgroup label="Missing pay item (new file)">
+                      <optgroup label="Pay items missing certs (new file)">
                         {missingPayItems.map((pi) => (
                           <option key={pi} value={`pi:${pi}`}>
                             {pi} — {coverMap.get(pi)?.description || ""}
@@ -156,8 +139,16 @@ export default function AllPagesGrid({
                       </optgroup>
                     )}
                     <option value="__new__">＋ New file from this page</option>
-                    {g && <option value="__unassign__">Unassign</option>}
                   </select>
+                  {g && (
+                    <button
+                      onClick={() => onSelectFile(g.id)}
+                      className="mt-1.5 truncate text-[11px] text-brand-700 hover:underline"
+                      title={g.filename}
+                    >
+                      Open {g.filename}
+                    </button>
+                  )}
                 </div>
               </div>
             );

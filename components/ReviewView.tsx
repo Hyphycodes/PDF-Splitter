@@ -18,9 +18,11 @@ import { renderPageJpeg } from "@/lib/pdf";
 import { runResearch, saveReferenceFromSource } from "@/lib/researchClient";
 import PdfViewer from "./PdfViewer";
 import PageLightbox from "./PageLightbox";
+import PageAssignBar from "./PageAssignBar";
 import ResearchPanel from "./ResearchPanel";
 import PageManager from "./PageManager";
 import AllPagesGrid from "./AllPagesGrid";
+import DashboardView from "./DashboardView";
 import {
   CheckIcon,
   CopyIcon,
@@ -35,6 +37,7 @@ import {
   TrashIcon,
   GridIcon,
   FileIcon,
+  DatabaseIcon,
 } from "./Icons";
 
 type SaveState = "idle" | "saving" | "saved";
@@ -73,12 +76,12 @@ export default function ReviewView({
   const [copied, setCopied] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
   const [correcting, setCorrecting] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<{ index: number; assign: boolean } | null>(null);
+  const [lightbox, setLightbox] = useState<{ index: number } | null>(null);
   const [editingPages, setEditingPages] = useState(false);
   const [savedRefs, setSavedRefs] = useState<Set<string>>(new Set());
   const [contract, setContract] = useState(result.contract);
   const [date, setDate] = useState(result.date);
-  const [reviewTab, setReviewTab] = useState<"files" | "pages">("files");
+  const [reviewTab, setReviewTab] = useState<"dashboard" | "files" | "pages">("dashboard");
   const startedResearch = useRef<Set<string>>(new Set());
 
   // Reset local state when a different inspection is opened.
@@ -87,6 +90,7 @@ export default function ReviewView({
     setSelectedId(result.groups[0]?.id ?? "");
     setContract(result.contract);
     setDate(result.date);
+    setReviewTab("dashboard");
     startedResearch.current = new Set();
   }, [result]);
 
@@ -136,6 +140,25 @@ export default function ReviewView({
   const unassigned = result.pages.filter(
     (p) => !p.isCoverSheet && p.index !== result.coverIndex && !assigned.has(p.index)
   );
+
+  // page index -> the file it currently lives in (for lightbox + grid).
+  const groupOfPage = useMemo(() => {
+    const m = new Map<number, OutputGroup>();
+    for (const g of groups) for (const i of g.pageIndexes) if (!m.has(i)) m.set(i, g);
+    return m;
+  }, [groups]);
+  const allPageIndexes = useMemo(
+    () => result.pages.map((p) => p.index).sort((a, b) => a - b),
+    [result.pages]
+  );
+  function navLightbox(dir: -1 | 1) {
+    setLightbox((lb) => {
+      if (!lb) return lb;
+      const pos = allPageIndexes.indexOf(lb.index);
+      const next = allPageIndexes[pos + dir];
+      return next === undefined ? lb : { index: next };
+    });
+  }
 
   function update(groupId: string, patch: (g: OutputGroup) => OutputGroup) {
     setGroups((gs) => gs.map((g) => (g.id === groupId ? patch(g) : g)));
@@ -505,12 +528,21 @@ export default function ReviewView({
       {/* Review tabs */}
       <div className="flex items-center gap-1 border-b border-slate-200 bg-white px-4 py-1.5">
         <button
+          onClick={() => setReviewTab("dashboard")}
+          className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+            reviewTab === "dashboard" ? "bg-slate-100 text-ink" : "text-ink-faint hover:text-ink"
+          }`}
+        >
+          <DatabaseIcon width={15} height={15} /> Overview
+        </button>
+        <button
           onClick={() => setReviewTab("files")}
           className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
             reviewTab === "files" ? "bg-slate-100 text-ink" : "text-ink-faint hover:text-ink"
           }`}
         >
           <FileIcon width={15} height={15} /> Files
+          <span className="rounded-full bg-slate-200 px-1.5 text-[10px] font-semibold text-ink-soft">{groups.length}</span>
         </button>
         <button
           onClick={() => setReviewTab("pages")}
@@ -525,7 +557,21 @@ export default function ReviewView({
         </button>
       </div>
 
-      {reviewTab === "pages" ? (
+      {reviewTab === "dashboard" ? (
+        <DashboardView
+          coverRows={result.coverRows}
+          groups={groups}
+          materials={materialMap}
+          coverIndex={result.coverIndex}
+          missingPayItems={missingPayItems}
+          unrecognizedPayItems={unrecognizedPayItems}
+          onOpenFile={(gid) => {
+            setSelectedId(gid);
+            setReviewTab("files");
+          }}
+          onGoToPages={() => setReviewTab("pages")}
+        />
+      ) : reviewTab === "pages" ? (
         <AllPagesGrid
           pages={result.pages}
           coverIndex={result.coverIndex}
@@ -534,7 +580,7 @@ export default function ReviewView({
           date={date}
           missingPayItems={missingPayItems}
           coverMap={coverMap}
-          onView={(idx) => setLightbox({ index: idx, assign: false })}
+          onView={(idx) => setLightbox({ index: idx })}
           onAssignGroup={(idx, gid) => addPageExclusive(gid, idx)}
           onAssignPayItem={(idx, pi) => createGroupForPayItem(pi, idx)}
           onNewFile={(idx) => createGroupFromPage(idx)}
@@ -629,7 +675,7 @@ export default function ReviewView({
                 {unassigned.map((p) => (
                   <div key={p.index} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-1.5">
                     <button
-                      onClick={() => setLightbox({ index: p.index, assign: true })}
+                      onClick={() => setLightbox({ index: p.index })}
                       title="Click to view full page"
                       className="relative shrink-0"
                     >
@@ -880,7 +926,7 @@ export default function ReviewView({
                     const pg = result.pages.find((p) => p.index === idx);
                     return (
                       <div key={idx} className="group relative overflow-hidden rounded-lg border border-slate-200 bg-white">
-                        <button onClick={() => setLightbox({ index: idx, assign: false })} title="Click to view full page">
+                        <button onClick={() => setLightbox({ index: idx })} title="Click to view full page">
                           {pg?.thumbnail && (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={pg.thumbnail} alt={`page ${idx + 1}`} className="h-28 w-full object-cover object-top hover:opacity-90" />
@@ -919,72 +965,36 @@ export default function ReviewView({
       <PageLightbox
         doc={doc}
         index={lightbox?.index ?? null}
-        title={lightbox ? `Page ${lightbox.index + 1}` : undefined}
+        title={lightbox ? (lightbox.index === result.coverIndex ? "Cover sheet" : `Page ${lightbox.index + 1}`) : undefined}
+        subtitle={
+          lightbox
+            ? lightbox.index === result.coverIndex
+              ? "Included in every file"
+              : groupOfPage.get(lightbox.index)?.filename ?? "Not assigned to a file"
+            : undefined
+        }
         onClose={() => setLightbox(null)}
+        onPrev={() => navLightbox(-1)}
+        onNext={() => navLightbox(1)}
+        hasPrev={lightbox ? allPageIndexes.indexOf(lightbox.index) > 0 : false}
+        hasNext={lightbox ? allPageIndexes.indexOf(lightbox.index) < allPageIndexes.length - 1 : false}
         actions={
-          lightbox?.assign ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-white/80">Assign to file:</span>
-              {groups.map((g) => (
-                <button
-                  key={g.id}
-                  onClick={() => {
-                    addPageExclusive(g.id, lightbox.index);
-                    setSelectedId(g.id);
-                    setLightbox(null);
-                  }}
-                  className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-600"
-                >
-                  {g.filename}
-                </button>
-              ))}
-              {missingPayItems.length > 0 && (
-                <>
-                  <span className="ml-1 text-xs text-amber-300">or missing pay item:</span>
-                  {missingPayItems.map((pi) => (
-                    <button
-                      key={pi}
-                      onClick={() => {
-                        createGroupForPayItem(pi, lightbox.index);
-                        setLightbox(null);
-                      }}
-                      className="rounded-md bg-amber-500/20 px-2.5 py-1 text-xs font-medium text-amber-100 hover:bg-amber-600"
-                    >
-                      {pi}
-                    </button>
-                  ))}
-                </>
-              )}
-              <button
-                onClick={() => {
-                  createGroupFromPage(lightbox.index);
-                  setLightbox(null);
-                }}
-                className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-600"
-              >
-                ＋ New file
-              </button>
-            </div>
-          ) : (
-            selected && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-white/80">Move this page to:</span>
-                {groups
-                  .filter((g) => g.id !== selectedId)
-                  .map((g) => (
-                    <button
-                      key={g.id}
-                      onClick={() => {
-                        addPageExclusive(g.id, lightbox!.index);
-                        setLightbox(null);
-                      }}
-                      className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-600"
-                    >
-                      {g.filename}
-                    </button>
-                  ))}
-              </div>
-            )
+          lightbox && (
+            <PageAssignBar
+              pageIndex={lightbox.index}
+              isCover={lightbox.index === result.coverIndex}
+              groups={groups}
+              currentGroup={groupOfPage.get(lightbox.index) ?? null}
+              missingPayItems={missingPayItems}
+              coverPayItems={result.coverRows.map((r) => r.pay_item)}
+              coverMap={coverMap}
+              onAssign={(gid) => addPageExclusive(gid, lightbox.index)}
+              onAssignPayItem={(pi) => createGroupForPayItem(pi, lightbox.index)}
+              onNewFile={() => createGroupFromPage(lightbox.index)}
+              onUnassign={() => unassignPage(lightbox.index)}
+              onAddPayItem={(gid, pi) => addPayItemRow(gid, pi)}
+              onRemovePayItem={(gid, pi) => deletePayItemRow(gid, pi)}
+            />
           )
         }
       />
@@ -997,7 +1007,7 @@ export default function ReviewView({
           assignedHere={new Set(selected.pageIndexes)}
           assignedElsewhere={(idx) => groups.some((g) => g.id !== selectedId && g.pageIndexes.includes(idx))}
           onToggle={(idx, on) => (on ? addPageExclusive(selectedId, idx) : removePage(selectedId, idx))}
-          onView={(idx) => setLightbox({ index: idx, assign: false })}
+          onView={(idx) => setLightbox({ index: idx })}
           onClose={() => setEditingPages(false)}
         />
       )}

@@ -163,8 +163,17 @@ node scripts/import-master.mjs path/to/Manual_for_Materials_Inspection_Electrica
   covers, page count, and a pending/confirmed status.
 - **Inline PDF viewer** — flip through each generated file in-app (cover on top,
   matched certs underneath); no download required to verify.
-- **Full-page preview** — click any page (assigned or uncategorized) to see it
-  full-size in a lightbox, and assign it from there.
+- **Overview tab** — the first thing you see after a split: stat cards plus a table
+  of every pay item (description, quantity, material code, which file it's in, page
+  count) with missing ones flagged. Click a row to jump to that file.
+- **All pages tab** — a big grid of every page; each has one clean dropdown that
+  shows where it's assigned and lets you move it.
+- **Full-page preview** — click any page to see it full-size in a lightbox with
+  prev/next arrows (← →) and click-outside to close. From there one dropdown moves
+  it to any file / missing pay item / new file, and you can add the other pay items
+  the box lists so the file links to them (updating its name).
+- **Near-miss reconciliation** — a cert pay item one character off from a cover pay
+  item is snapped to the correct one, so OCR slips don't show up as "missing."
 - **Add / edit pages** — each file has an "Add / edit pages" picker showing every
   page; check the ones that belong. Adding a page **moves** it here and removes it
   from any other file it was wrongly in.

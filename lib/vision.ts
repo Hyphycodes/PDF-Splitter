@@ -19,13 +19,14 @@ export interface OcrResult<T> {
   error?: string;
 }
 
-/** Read pay-item number(s) off a scanned cert page. */
-export async function ocrPayItems(pngDataUrl: string): Promise<OcrResult<string[]>> {
+/** Read pay-item number(s) off a scanned cert page. `candidates` are the cover's
+ * pay items, which sharpens reading of smudged/rotated boxes. */
+export async function ocrPayItems(pngDataUrl: string, candidates?: string[]): Promise<OcrResult<string[]>> {
   try {
     const res = await fetch("/api/vision", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "ocr", apiKey: getApiKey(), image: pngDataUrl }),
+      body: JSON.stringify({ mode: "ocr", apiKey: getApiKey(), image: pngDataUrl, candidates }),
     });
     const data = await res.json();
     if (!res.ok) return { data: [], error: data?.error || `OCR failed (${res.status})` };

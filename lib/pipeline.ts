@@ -24,6 +24,32 @@ const THUMB_WIDTH = 360;
 const OCR_WIDTH = 1800;
 const COVER_WIDTH = 2600;
 
+/** True if a and b differ by at most one edit (substitution/insert/delete). */
+function withinOneEdit(a: string, b: string): boolean {
+  if (a === b) return true;
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+    } else {
+      if (++edits > 1) return false;
+      if (la > lb) i++;
+      else if (lb > la) j++;
+      else {
+        i++;
+        j++;
+      }
+    }
+  }
+  return edits + (la - i) + (lb - j) <= 1;
+}
+
 /** Normalize a date string to MMDDYY; fall back to today. */
 function normalizeDate(raw: string): string {
   const s = (raw || "").trim();
@@ -129,6 +155,7 @@ export async function runPipeline(
   });
 
   // ---- Read each page: pay items + thumbnail -------------------------------
+  const candidates = coverRows.map((r) => r.pay_item);
   const pages: CertPage[] = [];
   let ocrErrors = 0;
   for (const t of texts) {
@@ -145,7 +172,7 @@ export async function runPipeline(
     if (!isCover && payItems.length === 0 && ai) {
       onProgress?.({ phase: "Reading pay-item boxes with Claude", current: t.index + 1, total: numPages });
       const pageImage = await renderPage(doc, t.index + 1, OCR_WIDTH);
-      const { data, error } = await ocrPayItems(pageImage);
+      const { data, error } = await ocrPayItems(pageImage, candidates);
       if (error) ocrErrors++;
       if (data.length) {
         payItems = data;
@@ -164,6 +191,24 @@ export async function runPipeline(
       needsReview,
       thumbnail,
     });
+  }
+
+  // Reconcile near-miss reads: if a cert pay item is one character off from a
+  // known cover pay item (and matches only that one), it's almost certainly an
+  // OCR misread — snap it to the cover value so it stops showing as "missing".
+  const coverPayItemSet = new Set(coverRows.map((r) => r.pay_item));
+  for (const page of pages) {
+    if (page.isCoverSheet) continue;
+    page.payItems = [
+      ...new Set(
+        page.payItems.map((pi) => {
+          if (coverPayItemSet.has(pi)) return pi;
+          const near = candidates.filter((c) => withinOneEdit(pi, c));
+          return near.length === 1 ? near[0] : pi;
+        })
+      ),
+    ];
+    page.needsReview = page.payItems.length === 0;
   }
 
   if (ocrErrors > 0) warnings.push(`${ocrErrors} scanned page(s) couldn't be read by Claude.`);
