@@ -1,9 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { UploadIcon, FileIcon, ShieldIcon, SparkIcon } from "./Icons";
+import type { SplitterKind } from "@/lib/types";
+import { UploadIcon, FileIcon, ShieldIcon, SparkIcon, SplitIcon, PageIcon } from "./Icons";
 
 interface Props {
+  kind: SplitterKind;
+  setKind: (k: SplitterKind) => void;
   research: boolean;
   setResearch: (v: boolean) => void;
   apiKey: string;
@@ -12,7 +15,24 @@ interface Props {
   onRun: (file: File) => void;
 }
 
+const KIND_COPY: Record<SplitterKind, { title: string; desc: string }> = {
+  cert: {
+    title: "Split an inspection packet",
+    desc:
+      "Drop in the full packet. The tool reads the cover sheet and the pay-item box on each cert, " +
+      "then builds one clean PDF per material — cover sheet on top, matched certs underneath.",
+  },
+  la15: {
+    title: "Split an LA-15 packet",
+    desc:
+      "Drop in the full LA-15 document. The tool reads the ticket number off every page and builds " +
+      "one PDF per page, named by that page's ticket number.",
+  },
+};
+
 export default function UploadView({
+  kind,
+  setKind,
   research,
   setResearch,
   apiKey,
@@ -24,6 +44,7 @@ export default function UploadView({
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const copy = KIND_COPY[kind];
 
   function pick(f: File | null) {
     if (f && f.type === "application/pdf") setFile(f);
@@ -31,12 +52,30 @@ export default function UploadView({
 
   return (
     <div className="mx-auto max-w-3xl animate-fade-in px-5 py-10">
+      <div className="mb-6 flex justify-center">
+        <div className="inline-flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+          <button
+            onClick={() => setKind("cert")}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${
+              kind === "cert" ? "bg-white text-ink shadow-sm" : "text-ink-faint hover:text-ink"
+            }`}
+          >
+            <SplitIcon width={15} height={15} /> Cert Splitter
+          </button>
+          <button
+            onClick={() => setKind("la15")}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${
+              kind === "la15" ? "bg-white text-ink shadow-sm" : "text-ink-faint hover:text-ink"
+            }`}
+          >
+            <PageIcon width={15} height={15} /> LA-15 Splitter
+          </button>
+        </div>
+      </div>
+
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold tracking-tight text-ink">Split an inspection packet</h1>
-        <p className="mx-auto mt-2 max-w-xl text-sm text-ink-faint">
-          Drop in the full packet. The tool reads the cover sheet and the pay-item box on each cert,
-          then builds one clean PDF per material — cover sheet on top, matched certs underneath.
-        </p>
+        <h1 className="text-3xl font-bold tracking-tight text-ink">{copy.title}</h1>
+        <p className="mx-auto mt-2 max-w-xl text-sm text-ink-faint">{copy.desc}</p>
       </div>
 
       <label
@@ -73,7 +112,9 @@ export default function UploadView({
           </div>
         ) : (
           <>
-            <div className="text-base font-semibold text-ink">Drop your packet PDF here</div>
+            <div className="text-base font-semibold text-ink">
+              {kind === "la15" ? "Drop your LA-15 PDF here" : "Drop your packet PDF here"}
+            </div>
             <div className="mt-1 text-sm text-ink-faint">or click to browse</div>
           </>
         )}
@@ -81,13 +122,15 @@ export default function UploadView({
 
       {/* Options */}
       <div className="card mt-6 divide-y divide-slate-100">
-        <Toggle
-          icon={<SparkIcon className="text-brand-600" />}
-          title="Research mode"
-          desc="After splitting, Claude verifies each material against the cert and the pay-item description, web-searches the manufacturer's datasheet (Service Wire, Advanced Digital Cable, …), and flags any disagreement. Found datasheets can be saved to your reference library."
-          checked={research}
-          onChange={setResearch}
-        />
+        {kind === "cert" && (
+          <Toggle
+            icon={<SparkIcon className="text-brand-600" />}
+            title="Research mode"
+            desc="After splitting, Claude verifies each material against the cert and the pay-item description, web-searches the manufacturer's datasheet (Service Wire, Advanced Digital Cable, …), and flags any disagreement. Found datasheets can be saved to your reference library."
+            checked={research}
+            onChange={setResearch}
+          />
+        )}
         {!serverKey && (
           <div className="px-5 py-4">
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-faint">
@@ -117,12 +160,13 @@ export default function UploadView({
         disabled={!file}
         onClick={() => file && onRun(file)}
       >
-        Split packet
+        {kind === "la15" ? "Split LA-15 packet" : "Split packet"}
       </button>
       {!keyReady && (
         <p className="mt-2 text-center text-xs text-amber-600">
-          No API key linked — the tool reads the text layer locally. Add a key for accurate quantities on
-          messy/scanned packets, research, and challenges.
+          {kind === "la15"
+            ? "No API key linked — the tool reads the text layer locally. Add a key so pages without a text layer (scans) can still have their ticket number read."
+            : "No API key linked — the tool reads the text layer locally. Add a key for accurate quantities on messy/scanned packets, research, and challenges."}
         </p>
       )}
 

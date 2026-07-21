@@ -21,6 +21,7 @@ import {
 } from "@/lib/db";
 import { loadPdf, renderPage, renderPageJpeg } from "@/lib/pdf";
 import { runPipeline, type ProgressEvent } from "@/lib/pipeline";
+import { runLa15Pipeline } from "@/lib/la15";
 import { getApiKey, setApiKey as persistApiKey } from "@/lib/vision";
 import { hasServerKey } from "@/lib/chatClient";
 import { buildGroupContext } from "@/lib/context";
@@ -32,12 +33,16 @@ import type {
   Inspection,
   PipelineResult,
   OutputGroup,
+  SplitterKind,
+  La15Result,
+  TicketGroup,
   Proposal,
 } from "@/lib/types";
 import NavBar, { type View } from "@/components/NavBar";
 import UploadView from "@/components/UploadView";
 import ProcessingView from "@/components/ProcessingView";
 import ReviewView from "@/components/ReviewView";
+import La15ReviewView from "@/components/La15ReviewView";
 import ReferenceView from "@/components/ReferenceView";
 import HistoryView from "@/components/HistoryView";
 import ChatPanel, { type ChatScope } from "@/components/ChatPanel";
@@ -50,8 +55,10 @@ export default function AppShell() {
   const [view, setView] = useState<View>("split");
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
+  const [splitterKind, setSplitterKind] = useState<SplitterKind>("cert");
 
   const [result, setResult] = useState<PipelineResult | null>(null);
+  const [la15Result, setLa15Result] = useState<La15Result | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [sourceBytes, setSourceBytes] = useState<ArrayBuffer | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(null);
@@ -79,6 +86,7 @@ export default function AppShell() {
 
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestGroups = useRef<OutputGroup[] | null>(null);
+  const latestLa15Groups = useRef<TicketGroup[] | null>(null);
 
   const refreshData = useCallback(async () => {
     const [m, c, n, i, d] = await Promise.all([
@@ -117,6 +125,23 @@ export default function AppShell() {
       const loaded = await loadPdf(buf);
       setDoc(loaded.doc);
       setSourceBytes(keep);
+
+      if (splitterKind === "la15") {
+        const res = await runLa15Pipeline(loaded.doc, loaded.numPages, {
+          keyAvailable: serverKey || !!apiKey,
+          onProgress: setProgress,
+        });
+        setLa15Result(res);
+        setStage("review");
+
+        const defaultName = file.name.replace(/\.pdf$/i, "");
+        setProjectName(defaultName);
+        const insp = await persistLa15Inspection(res, res.groups, keep, defaultName, null);
+        setCurrentId(insp.id);
+        setSaveState("saved");
+        await refreshData();
+        return;
+      }
 
       const res = await runPipeline(loaded.doc, loaded.numPages, {
         research,
@@ -157,6 +182,7 @@ export default function AppShell() {
     const now = Date.now();
     const insp: Inspection = {
       id: id ?? (crypto.randomUUID ? crypto.randomUUID() : `insp_${now}`),
+      kind: "cert",
       name: name || existing?.name || `${res.contract || "Packet"}_${res.date || ""}`,
       contract: res.contract,
       date: res.date,
@@ -172,9 +198,52 @@ export default function AppShell() {
     return insp;
   }
 
+  async function persistLa15Inspection(
+    res: La15Result,
+    groups: TicketGroup[],
+    bytes: ArrayBuffer,
+    name: string,
+    id: string | null
+  ): Promise<Inspection> {
+    // Strip heavy fields (thumbnails, raw text) before storing.
+    const slimResult: La15Result = {
+      ...res,
+      groups,
+      pages: res.pages.map((p) => ({ ...p, thumbnail: undefined, rawText: "" })),
+    };
+    const existing = id ? await getInspection(id) : undefined;
+    const now = Date.now();
+    const insp: Inspection = {
+      id: id ?? (crypto.randomUUID ? crypto.randomUUID() : `insp_${now}`),
+      kind: "la15",
+      name: name || existing?.name || "LA-15 packet",
+      created_at: existing?.created_at ?? now,
+      updated_at: now,
+      pageCount: res.pages.length,
+      fileCount: groups.length,
+      pdf: new Blob([bytes], { type: "application/pdf" }),
+      result: slimResult,
+    };
+    await saveInspection(insp);
+    return insp;
+  }
+
   // Debounced re-save of the open inspection as the inspector edits.
   function scheduleSave(name: string) {
-    if (!currentId || !result || !sourceBytes) return;
+    if (!currentId || !sourceBytes) return;
+    if (splitterKind === "la15") {
+      if (!la15Result) return;
+      setSaveState("saving");
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      persistTimer.current = setTimeout(async () => {
+        const groups = (latestLa15Groups.current ?? la15Result.groups) as TicketGroup[];
+        await persistLa15Inspection(la15Result, groups, sourceBytes, name, currentId);
+        setSaveState("saved");
+        await refreshData();
+      }, 600);
+      return;
+    }
+    if (!result) return;
     setSaveState("saving");
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(async () => {
@@ -187,6 +256,11 @@ export default function AppShell() {
 
   function handleGroupsChange(groups: OutputGroup[]) {
     latestGroups.current = groups;
+    scheduleSave(projectName);
+  }
+
+  function handleLa15GroupsChange(groups: TicketGroup[]) {
+    latestLa15Groups.current = groups;
     scheduleSave(projectName);
   }
 
@@ -206,6 +280,27 @@ export default function AppShell() {
       const bytes = await insp.pdf.arrayBuffer();
       const keep = bytes.slice(0);
       const loaded = await loadPdf(bytes);
+
+      if (insp.kind === "la15") {
+        const pages = [];
+        for (const p of insp.result.pages) {
+          setProgress({ phase: "Reopening inspection", current: p.index + 1, total: insp.pageCount });
+          pages.push({ ...p, thumbnail: await renderPage(loaded.doc, p.index + 1, THUMB_WIDTH) });
+        }
+        const res: La15Result = { ...insp.result, pages };
+        latestLa15Groups.current = res.groups;
+        setDoc(loaded.doc);
+        setSourceBytes(keep);
+        setLa15Result(res);
+        setResult(null);
+        setSplitterKind("la15");
+        setCurrentId(insp.id);
+        setProjectName(insp.name);
+        setSaveState("saved");
+        setStage("review");
+        return;
+      }
+
       // Regenerate thumbnails for the saved pages.
       const pages = [];
       for (const p of insp.result.pages) {
@@ -217,6 +312,8 @@ export default function AppShell() {
       setDoc(loaded.doc);
       setSourceBytes(keep);
       setResult(res);
+      setLa15Result(null);
+      setSplitterKind("cert");
       setCurrentId(insp.id);
       setProjectName(insp.name);
       setSaveState("saved");
@@ -298,6 +395,7 @@ export default function AppShell() {
   function reset() {
     setStage("idle");
     setResult(null);
+    setLa15Result(null);
     setDoc(null);
     setSourceBytes(null);
     setProgress(null);
@@ -316,6 +414,8 @@ export default function AppShell() {
 
       {view === "split" && stage === "idle" && (
         <UploadView
+          kind={splitterKind}
+          setKind={setSplitterKind}
           research={research}
           setResearch={setResearch}
           apiKey={apiKey}
@@ -337,7 +437,20 @@ export default function AppShell() {
         </div>
       )}
 
-      {view === "split" && stage === "review" && result && sourceBytes && (
+      {view === "split" && stage === "review" && splitterKind === "la15" && la15Result && sourceBytes && (
+        <La15ReviewView
+          result={la15Result}
+          doc={doc}
+          sourceBytes={sourceBytes}
+          projectName={projectName}
+          onRenameProject={renameProject}
+          saveState={saveState}
+          onReset={reset}
+          onGroupsChange={handleLa15GroupsChange}
+        />
+      )}
+
+      {view === "split" && stage === "review" && splitterKind === "cert" && result && sourceBytes && (
         <ReviewView
           result={result}
           doc={doc}

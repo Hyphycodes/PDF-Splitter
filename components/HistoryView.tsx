@@ -54,16 +54,25 @@ export default function HistoryView({ inspections, onOpen, onDelete }: Props) {
                   <FileIcon width={22} height={22} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-semibold text-ink">{insp.name}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="truncate font-semibold text-ink">{insp.name}</div>
+                    <span className="chip shrink-0 bg-slate-100 text-[10px] text-ink-faint">
+                      {insp.kind === "la15" ? "LA-15" : "Cert"}
+                    </span>
+                  </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-ink-faint">
-                    <span className="font-mono">{insp.contract || "contract ?"}</span>
-                    <span>·</span>
-                    <span>{insp.date || "date ?"}</span>
-                    <span>·</span>
+                    {insp.kind === "cert" && (
+                      <>
+                        <span className="font-mono">{insp.contract || "contract ?"}</span>
+                        <span>·</span>
+                        <span>{insp.date || "date ?"}</span>
+                        <span>·</span>
+                      </>
+                    )}
                     <span>{insp.fileCount} files</span>
                     <span>·</span>
                     <span>{insp.pageCount} pages</span>
-                    {insp.confirmedCount > 0 && (
+                    {insp.kind === "cert" && insp.confirmedCount > 0 && (
                       <span className="inline-flex items-center gap-0.5 text-emerald-600">
                         <CheckIcon width={12} height={12} /> {insp.confirmedCount} confirmed
                       </span>
