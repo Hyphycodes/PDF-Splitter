@@ -91,6 +91,17 @@ export function parseCoverRows(text: string): CoverRow[] {
   return rows;
 }
 
+// LA-15 ticket numbers follow an explicit label ("Ticket No: 12345", "Ticket #12345",
+// "Ticket Number TX-4521"); the NO/NUMBER/#/: separator is required so plain prose
+// mentioning "ticket" (e.g. "no ticket field on this page") doesn't false-match.
+const TICKET_LABEL_RE = /\bTICKET\s*(?:NO\.?|NUMBER|#|:)\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{2,19})/i;
+
+/** Best-effort ticket number for an LA-15 page: the value right after a "Ticket #/No/Number" label. */
+export function findTicketNumber(text: string): string | null {
+  const m = text.match(TICKET_LABEL_RE);
+  return m ? m[1].toUpperCase() : null;
+}
+
 /** Pull a contract id + date from header text or filename, best-effort. */
 export function guessContractAndDate(coverText: string, filename: string): { contract: string; date: string } {
   let contract = "";

@@ -3,9 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Reads scanned pages with Claude vision. Two modes:
-//   mode "ocr"   -> find the stamped pay-item number(s) on a cert page
-//   mode "cover" -> read the whole IL OKAY LOG cover table (rows + date + contract)
+// Reads scanned pages with Claude vision. Three modes:
+//   mode "ocr"    -> find the stamped pay-item number(s) on a cert page
+//   mode "cover"  -> read the whole IL OKAY LOG cover table (rows + date + contract)
+//   mode "ticket" -> find the ticket number on an LA-15 page
 // Uses the most capable model so a messy scan still reads. Only the single page
 // image is forwarded; the rest of the packet stays local.
 
@@ -44,6 +45,12 @@ const COVER_PROMPT =
   '"description":"ELCBL C SIGNAL 14 3C","quantity":"1500","uom":"LINFT"}]}. ' +
   "Use empty strings only for cells you genuinely cannot read. No commentary.";
 
+const TICKET_PROMPT =
+  "You are reading a single page of an LA-15 form. Find the TICKET NUMBER on this page — it is " +
+  "usually labeled 'Ticket No.', 'Ticket #', or 'Ticket Number', stamped or hand-written, and can be " +
+  "digits only or a mix of letters, digits, and dashes. Read it exactly as printed. " +
+  'Respond with ONLY JSON: {"ticketNumber":"12345"}. If you cannot find one, {"ticketNumber":null}. No commentary.';
+
 function extractJson(text: string): Record<string, unknown> | null {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
@@ -62,7 +69,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   }
 
-  const mode = body.mode === "cover" ? "cover" : "ocr";
+  const mode = body.mode === "cover" ? "cover" : body.mode === "ticket" ? "ticket" : "ocr";
   const { image } = body;
   const apiKey = process.env.ANTHROPIC_API_KEY || body.apiKey;
   if (!apiKey) return NextResponse.json({ error: "missing api key" }, { status: 401 });
@@ -71,7 +78,7 @@ export async function POST(req: NextRequest) {
   const img = dataUrlToParts(image);
   if (!img) return NextResponse.json({ error: "bad image" }, { status: 400 });
 
-  let prompt = mode === "cover" ? COVER_PROMPT : OCR_PROMPT;
+  let prompt = mode === "cover" ? COVER_PROMPT : mode === "ticket" ? TICKET_PROMPT : OCR_PROMPT;
   if (mode === "ocr" && body.candidates?.length) {
     prompt +=
       "\n\nThese pay-item numbers are listed on the cover sheet for this packet, so the box on this " +
@@ -99,7 +106,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: mode === "cover" ? 2500 : 256,
+        max_tokens: mode === "cover" ? 2500 : mode === "ticket" ? 128 : 256,
         messages: [{ role: "user", content }],
       }),
     });
@@ -120,6 +127,10 @@ export async function POST(req: NextRequest) {
         date: typeof parsed?.date === "string" ? parsed.date : "",
         rows,
       });
+    }
+    if (mode === "ticket") {
+      const ticketNumber = typeof parsed?.ticketNumber === "string" ? parsed.ticketNumber : null;
+      return NextResponse.json({ ticketNumber });
     }
     const payItems =
       parsed && Array.isArray(parsed.payItems)

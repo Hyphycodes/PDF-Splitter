@@ -98,23 +98,65 @@ export interface PipelineResult {
   warnings?: string[];
 }
 
+// ---- LA-15 ticket splitter --------------------------------------------------
+
+export type SplitterKind = "cert" | "la15";
+
+export interface TicketPage {
+  /** 0-based index into the source PDF. */
+  index: number;
+  pageNumber: number; // 1-based for display
+  ticketNumber: string | null;
+  readMode: ReadMode;
+  rawText: string;
+  needsReview: boolean; // no ticket number found
+  thumbnail?: string; // dataURL
+}
+
+export interface TicketGroup {
+  id: string;
+  ticketNumber: string | null;
+  /** always exactly one page for the LA-15 splitter — one output file per page. */
+  pageIndexes: number[];
+  filename: string;
+  status: "pending" | "confirmed";
+}
+
+export interface La15Result {
+  pages: TicketPage[];
+  groups: TicketGroup[];
+  warnings?: string[];
+}
+
 // ---- Saved inspections (history) ------------------------------------------
 
-export interface Inspection {
+interface InspectionBase {
   id: string;
   name: string;
-  contract: string;
-  date: string; // packet date (MMDDYY-ish, as read)
   created_at: number;
   updated_at: number;
   pageCount: number;
   fileCount: number;
-  confirmedCount: number;
   /** original packet bytes, stored locally so the run can be fully reopened */
   pdf: Blob;
+}
+
+export interface CertInspection extends InspectionBase {
+  kind: "cert";
+  contract: string;
+  date: string; // packet date (MMDDYY-ish, as read)
+  confirmedCount: number;
   /** reviewed state — pages carry no thumbnails (regenerated on open) */
   result: PipelineResult;
 }
+
+export interface La15Inspection extends InspectionBase {
+  kind: "la15";
+  /** reviewed state — pages carry no thumbnails (regenerated on open) */
+  result: La15Result;
+}
+
+export type Inspection = CertInspection | La15Inspection;
 
 // ---- Research memory (learning over time) ----------------------------------
 

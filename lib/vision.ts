@@ -36,6 +36,23 @@ export async function ocrPayItems(pngDataUrl: string, candidates?: string[]): Pr
   }
 }
 
+/** Read the ticket number off a scanned LA-15 page. */
+export async function ocrTicketNumber(pngDataUrl: string): Promise<OcrResult<string | null>> {
+  try {
+    const res = await fetch("/api/vision", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "ticket", apiKey: getApiKey(), image: pngDataUrl }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { data: null, error: data?.error || `OCR failed (${res.status})` };
+    const ticket = typeof data.ticketNumber === "string" && data.ticketNumber.trim() ? data.ticketNumber.trim() : null;
+    return { data: ticket };
+  } catch (e) {
+    return { data: null, error: String(e) };
+  }
+}
+
 export interface CoverExtract {
   contract: string;
   date: string;

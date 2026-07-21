@@ -1,15 +1,20 @@
 import { PDFDocument } from "pdf-lib";
 import { zipSync } from "fflate";
-import type { OutputGroup } from "./types";
+
+/** Minimal shape buildGroupPdf/buildZip need — satisfied by OutputGroup and TicketGroup alike. */
+export interface BuildableGroup {
+  filename: string;
+  pageIndexes: number[];
+}
 
 /**
- * Build one output PDF for a group: page 1 = cover sheet, then the matched cert
- * pages in order. Fully local (pdf-lib) — bytes never leave the machine.
+ * Build one output PDF for a group: page 1 = cover sheet (if any), then the
+ * group's pages in order. Fully local (pdf-lib) — bytes never leave the machine.
  */
 export async function buildGroupPdf(
   sourceBytes: ArrayBuffer,
   coverIndex: number | null,
-  group: OutputGroup
+  group: BuildableGroup
 ): Promise<Uint8Array> {
   const src = await PDFDocument.load(sourceBytes);
   const out = await PDFDocument.create();
@@ -42,7 +47,7 @@ export function safeName(s: string): string {
 export async function buildZip(
   sourceBytes: ArrayBuffer,
   coverIndex: number | null,
-  groups: OutputGroup[],
+  groups: BuildableGroup[],
   folderName: string
 ): Promise<Blob> {
   const folder = safeName(folderName);
