@@ -45,10 +45,17 @@ const ROTATION_ANGLES = [0, 90, 180, 270] as const;
 // to that orientation (small skew from italics/handwritten fonts is common).
 const ANGLE_TOLERANCE_DEG = 8;
 // Need at least this many significant characters of agreeing text before trusting
-// the signal — a couple of stray glyphs shouldn't flip a page's orientation.
-const MIN_ROTATION_WEIGHT = 12;
-// ...and they need to be a clear majority, not just a plurality, of the text found.
-const MAJORITY_FRACTION = 0.7;
+// the signal — a couple of stray glyphs (a rotated stamp, a sideways watermark)
+// shouldn't flip a whole page that otherwise reads fine. A wrong auto-flip is
+// worse than leaving a genuinely-sideways page for the inspector to fix by hand,
+// so this errs conservative.
+const MIN_ROTATION_WEIGHT = 40;
+// ...spread across more than one text run, so a single rotated element can't
+// dominate just by being a long string (e.g. one long stamped disclaimer).
+const MIN_ROTATION_RUNS = 3;
+// ...and they need to be a clear, dominant majority, not just a plurality, of
+// everything found on the page.
+const MAJORITY_FRACTION = 0.85;
 
 /**
  * Best-effort page rotation from the text layer's own glyph orientation: each
@@ -60,6 +67,7 @@ const MAJORITY_FRACTION = 0.7;
  */
 function detectRotationHint(items: TextRun[], pageRotate: number): number | null {
   const weightByAngle: Record<number, number> = { 0: 0, 90: 0, 180: 0, 270: 0 };
+  const runsByAngle: Record<number, number> = { 0: 0, 90: 0, 180: 0, 270: 0 };
   let totalWeight = 0;
 
   for (const it of items) {
@@ -75,6 +83,7 @@ function detectRotationHint(items: TextRun[], pageRotate: number): number | null
 
     const weight = str.length;
     weightByAngle[nearest] += weight;
+    runsByAngle[nearest] += 1;
     totalWeight += weight;
   }
 
@@ -89,6 +98,7 @@ function detectRotationHint(items: TextRun[], pageRotate: number): number | null
     }
   }
   if (bestWeight / totalWeight < MAJORITY_FRACTION) return null;
+  if (runsByAngle[contentAngle] < MIN_ROTATION_RUNS) return null;
 
   const pageRotateNorm = ((pageRotate % 360) + 360) % 360;
   return ((contentAngle - pageRotateNorm) % 360 + 360) % 360;
