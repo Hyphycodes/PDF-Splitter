@@ -36,6 +36,7 @@ function groupsFromPages(pages: TicketPage[]): TicketGroup[] {
       pageIndexes: [pg.index],
       filename,
       status: "pending",
+      rotation: pg.rotation,
     };
   });
 }
@@ -57,19 +58,24 @@ export async function runLa15Pipeline(
 
   for (let p = 1; p <= numPages; p++) {
     onProgress?.({ phase: "Reading pages", current: p, total: numPages });
-    const { text, hasTextLayer } = await extractPageText(doc, p);
+    const { text, hasTextLayer, rotationHint } = await extractPageText(doc, p);
     const thumbnail = await renderPage(doc, p, THUMB_WIDTH);
 
     let ticketNumber = findTicketNumber(text);
     let readMode: TicketPage["readMode"] = hasTextLayer ? "text-layer" : "none";
+    // Text-layer pages: the glyph-orientation heuristic (computed locally, page
+    // never leaves the machine). Scanned pages fall back to vision below, which
+    // reads the rotation straight off the image it's already looking at.
+    let rotation = rotationHint ?? 0;
 
     if (!ticketNumber && keyAvailable) {
       onProgress?.({ phase: "Reading ticket numbers with Claude", current: p, total: numPages });
       const image = await renderPage(doc, p, OCR_WIDTH);
       const { data, error } = await ocrTicketNumber(image);
       if (error) ocrErrors++;
-      if (data) {
-        ticketNumber = data;
+      else rotation = data.rotation;
+      if (data.ticketNumber) {
+        ticketNumber = data.ticketNumber;
         readMode = "vision";
       }
     }
@@ -82,6 +88,7 @@ export async function runLa15Pipeline(
       rawText: text,
       needsReview: !ticketNumber,
       thumbnail,
+      rotation,
     });
   }
 

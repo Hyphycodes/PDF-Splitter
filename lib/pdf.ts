@@ -27,18 +27,88 @@ export interface PageText {
   index: number; // 0-based
   text: string;
   hasTextLayer: boolean;
+  /** clockwise rotation (0/90/180/270) that would need to be added to the page's
+   *  current /Rotate to make its text layer read upright; null when the page has
+   *  too little text, or the text runs don't agree on one orientation. */
+  rotationHint: number | null;
+}
+
+/** Shape of a pdf.js text-content run we need — narrower than the library's own
+ *  TextItem (not re-exported from the package's top-level types in this version). */
+interface TextRun {
+  str: string;
+  transform: number[];
+}
+
+const ROTATION_ANGLES = [0, 90, 180, 270] as const;
+// Text runs within this many degrees of a right angle are treated as belonging
+// to that orientation (small skew from italics/handwritten fonts is common).
+const ANGLE_TOLERANCE_DEG = 8;
+// Need at least this many significant characters of agreeing text before trusting
+// the signal — a couple of stray glyphs shouldn't flip a page's orientation.
+const MIN_ROTATION_WEIGHT = 12;
+// ...and they need to be a clear majority, not just a plurality, of the text found.
+const MAJORITY_FRACTION = 0.7;
+
+/**
+ * Best-effort page rotation from the text layer's own glyph orientation: each
+ * text run's transform matrix encodes the angle it was drawn at (independent of
+ * the page's /Rotate flag), so a page whose text consistently reads sideways or
+ * upside-down gives that away even when the raw string content still extracts
+ * fine. Returns the fix to add to the page's current rotation, or null when the
+ * signal isn't strong enough to trust.
+ */
+function detectRotationHint(items: TextRun[], pageRotate: number): number | null {
+  const weightByAngle: Record<number, number> = { 0: 0, 90: 0, 180: 0, 270: 0 };
+  let totalWeight = 0;
+
+  for (const it of items) {
+    const str = it.str?.trim();
+    if (!str || str.length < 2) continue;
+    const [a, b] = it.transform;
+    if (Math.hypot(a, b) < 1e-6) continue; // degenerate matrix, no orientation info
+
+    const angleDeg = ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360;
+    const nearest = (Math.round(angleDeg / 90) * 90) % 360;
+    const deviation = Math.min(Math.abs(angleDeg - nearest), 360 - Math.abs(angleDeg - nearest));
+    if (deviation > ANGLE_TOLERANCE_DEG) continue;
+
+    const weight = str.length;
+    weightByAngle[nearest] += weight;
+    totalWeight += weight;
+  }
+
+  if (totalWeight < MIN_ROTATION_WEIGHT) return null;
+
+  let contentAngle = 0;
+  let bestWeight = -1;
+  for (const angle of ROTATION_ANGLES) {
+    if (weightByAngle[angle] > bestWeight) {
+      bestWeight = weightByAngle[angle];
+      contentAngle = angle;
+    }
+  }
+  if (bestWeight / totalWeight < MAJORITY_FRACTION) return null;
+
+  const pageRotateNorm = ((pageRotate % 360) + 360) % 360;
+  return ((contentAngle - pageRotateNorm) % 360 + 360) % 360;
 }
 
 /** Extract the text layer of a single page. Empty text => likely image-only/scanned. */
 export async function extractPageText(doc: pdfjsLib.PDFDocumentProxy, pageNumber: number): Promise<PageText> {
   const page = await doc.getPage(pageNumber);
   const content = await page.getTextContent();
-  const text = content.items
-    .map((it) => ("str" in it ? it.str : ""))
+  const textRuns: TextRun[] = [];
+  for (const it of content.items) {
+    if ("str" in it && "transform" in it) textRuns.push({ str: it.str, transform: it.transform });
+  }
+  const text = textRuns
+    .map((r) => r.str)
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
-  return { index: pageNumber - 1, text, hasTextLayer: text.length > 8 };
+  const rotationHint = detectRotationHint(textRuns, page.rotate);
+  return { index: pageNumber - 1, text, hasTextLayer: text.length > 8, rotationHint };
 }
 
 /** Render a page to a PNG dataURL at the given target width (for thumbnails or vision OCR). */
