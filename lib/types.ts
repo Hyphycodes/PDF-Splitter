@@ -111,6 +111,9 @@ export interface TicketPage {
   rawText: string;
   needsReview: boolean; // no ticket number found
   thumbnail?: string; // dataURL
+  /** clockwise rotation (0/90/180/270) applied on top of the page's own orientation
+   *  to make the ticket number upright, as auto-detected during the run. */
+  rotation: number;
 }
 
 export interface TicketGroup {
@@ -120,6 +123,9 @@ export interface TicketGroup {
   pageIndexes: number[];
   filename: string;
   status: "pending" | "confirmed";
+  /** clockwise rotation (0/90/180/270) baked into the output PDF; starts from
+   *  TicketPage.rotation but is freely editable by the inspector. */
+  rotation: number;
 }
 
 export interface La15Result {

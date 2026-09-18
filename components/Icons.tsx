@@ -180,6 +180,20 @@ export const LinkIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const RotateCwIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+    <path d="M20 4v5h-5" />
+  </svg>
+);
+
+export const RotateCcwIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 12a8 8 0 1 0 2.6-5.9" />
+    <path d="M4 4v5h5" />
+  </svg>
+);
+
 export const GavelIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="M14 13l-7.5 7.5a2 2 0 0 1-2.8-2.8L11 10" />

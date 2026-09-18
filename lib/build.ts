@@ -1,10 +1,13 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees } from "pdf-lib";
 import { zipSync } from "fflate";
 
 /** Minimal shape buildGroupPdf/buildZip need — satisfied by OutputGroup and TicketGroup alike. */
 export interface BuildableGroup {
   filename: string;
   pageIndexes: number[];
+  /** clockwise rotation (0/90/180/270) to add on top of each page's existing
+   *  orientation. Never applied to a cover page. */
+  rotation?: number;
 }
 
 /**
@@ -26,7 +29,13 @@ export async function buildGroupPdf(
   }
 
   const copied = await out.copyPages(src, indexes);
-  copied.forEach((p) => out.addPage(p));
+  const rotation = ((group.rotation ?? 0) % 360 + 360) % 360;
+  copied.forEach((page, i) => {
+    if (rotation && indexes[i] !== coverIndex) {
+      page.setRotation(degrees((page.getRotation().angle + rotation) % 360));
+    }
+    out.addPage(page);
+  });
   return out.save();
 }
 

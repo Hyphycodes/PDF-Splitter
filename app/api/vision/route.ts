@@ -46,10 +46,22 @@ const COVER_PROMPT =
   "Use empty strings only for cells you genuinely cannot read. No commentary.";
 
 const TICKET_PROMPT =
-  "You are reading a single page of an LA-15 form. Find the TICKET NUMBER on this page — it is " +
-  "usually labeled 'Ticket No.', 'Ticket #', or 'Ticket Number', stamped or hand-written, and can be " +
-  "digits only or a mix of letters, digits, and dashes. Read it exactly as printed. " +
-  'Respond with ONLY JSON: {"ticketNumber":"12345"}. If you cannot find one, {"ticketNumber":null}. No commentary.';
+  "You are reading a single page of an LA-15 form. This image is exactly how the page currently " +
+  "appears — it may be sideways or upside-down. Find the TICKET NUMBER on this page — it is usually " +
+  "labeled 'Ticket No.', 'Ticket #', or 'Ticket Number', stamped or hand-written, and can be digits " +
+  "only or a mix of letters, digits, and dashes. Read it exactly as printed, in whatever orientation " +
+  "it appears. Also determine the CLOCKWISE rotation — 0, 90, 180, or 270 degrees — that would need " +
+  "to be applied to THIS IMAGE to make the ticket number (and the rest of the page) upright, reading " +
+  "normally left-to-right. " +
+  'Respond with ONLY JSON: {"ticketNumber":"12345","rotation":0}. If you cannot find a ticket number, ' +
+  '{"ticketNumber":null,"rotation":0}. No commentary.';
+
+function normalizeRotation(v: unknown): 0 | 90 | 180 | 270 {
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN;
+  if (!Number.isFinite(n)) return 0;
+  const norm = (((Math.round(n / 90) * 90) % 360) + 360) % 360;
+  return norm === 90 || norm === 180 || norm === 270 ? norm : 0;
+}
 
 function extractJson(text: string): Record<string, unknown> | null {
   const match = text.match(/\{[\s\S]*\}/);
@@ -130,7 +142,8 @@ export async function POST(req: NextRequest) {
     }
     if (mode === "ticket") {
       const ticketNumber = typeof parsed?.ticketNumber === "string" ? parsed.ticketNumber : null;
-      return NextResponse.json({ ticketNumber });
+      const rotation = normalizeRotation(parsed?.rotation);
+      return NextResponse.json({ ticketNumber, rotation });
     }
     const payItems =
       parsed && Array.isArray(parsed.payItems)

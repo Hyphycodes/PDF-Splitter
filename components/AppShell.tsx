@@ -285,9 +285,11 @@ export default function AppShell() {
         const pages = [];
         for (const p of insp.result.pages) {
           setProgress({ phase: "Reopening inspection", current: p.index + 1, total: insp.pageCount });
-          pages.push({ ...p, thumbnail: await renderPage(loaded.doc, p.index + 1, THUMB_WIDTH) });
+          // rotation defaults to 0 for inspections saved before rotation support existed.
+          pages.push({ ...p, rotation: p.rotation ?? 0, thumbnail: await renderPage(loaded.doc, p.index + 1, THUMB_WIDTH) });
         }
-        const res: La15Result = { ...insp.result, pages };
+        const groups = insp.result.groups.map((g) => ({ ...g, rotation: g.rotation ?? 0 }));
+        const res: La15Result = { ...insp.result, pages, groups };
         latestLa15Groups.current = res.groups;
         setDoc(loaded.doc);
         setSourceBytes(keep);

@@ -36,8 +36,16 @@ export async function ocrPayItems(pngDataUrl: string, candidates?: string[]): Pr
   }
 }
 
-/** Read the ticket number off a scanned LA-15 page. */
-export async function ocrTicketNumber(pngDataUrl: string): Promise<OcrResult<string | null>> {
+export interface TicketOcrResult {
+  ticketNumber: string | null;
+  /** clockwise rotation (0/90/180/270) needed on the sent image to make the
+   *  ticket number upright, as read by Claude. */
+  rotation: 0 | 90 | 180 | 270;
+}
+
+/** Read the ticket number (and required upright rotation) off a scanned LA-15 page. */
+export async function ocrTicketNumber(pngDataUrl: string): Promise<OcrResult<TicketOcrResult>> {
+  const empty: TicketOcrResult = { ticketNumber: null, rotation: 0 };
   try {
     const res = await fetch("/api/vision", {
       method: "POST",
@@ -45,11 +53,12 @@ export async function ocrTicketNumber(pngDataUrl: string): Promise<OcrResult<str
       body: JSON.stringify({ mode: "ticket", apiKey: getApiKey(), image: pngDataUrl }),
     });
     const data = await res.json();
-    if (!res.ok) return { data: null, error: data?.error || `OCR failed (${res.status})` };
+    if (!res.ok) return { data: empty, error: data?.error || `OCR failed (${res.status})` };
     const ticket = typeof data.ticketNumber === "string" && data.ticketNumber.trim() ? data.ticketNumber.trim() : null;
-    return { data: ticket };
+    const rotation = data.rotation === 90 || data.rotation === 180 || data.rotation === 270 ? data.rotation : 0;
+    return { data: { ticketNumber: ticket, rotation } };
   } catch (e) {
-    return { data: null, error: String(e) };
+    return { data: empty, error: String(e) };
   }
 }
 

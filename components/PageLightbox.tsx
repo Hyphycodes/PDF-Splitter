@@ -15,6 +15,8 @@ interface Props {
   onNext?: () => void;
   hasPrev?: boolean;
   hasNext?: boolean;
+  /** clockwise rotation (0/90/180/270) applied to the rendered preview */
+  rotation?: number;
   /** clean action panel rendered under the page (assignment controls) */
   actions?: React.ReactNode;
 }
@@ -29,6 +31,7 @@ export default function PageLightbox({
   onNext,
   hasPrev,
   hasNext,
+  rotation = 0,
   actions,
 }: Props) {
   const [src, setSrc] = useState<string | null>(null);
@@ -61,6 +64,9 @@ export default function PageLightbox({
 
   if (index === null) return null;
 
+  const rot = ((rotation % 360) + 360) % 360;
+  const swapped = rot === 90 || rot === 270;
+
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/80 backdrop-blur-sm" onClick={onClose}>
       {/* header */}
@@ -91,7 +97,16 @@ export default function PageLightbox({
         <div className="flex h-full items-center justify-center overflow-auto py-1" onClick={(e) => e.stopPropagation()}>
           {src ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={src} alt={`page ${index + 1}`} className="max-h-full w-auto rounded-lg bg-white shadow-float" />
+            <img
+              src={src}
+              alt={`page ${index + 1}`}
+              style={{ transform: rot ? `rotate(${rot}deg)` : undefined }}
+              className={
+                swapped
+                  ? "max-h-[85vw] max-w-[85vh] rounded-lg bg-white shadow-float"
+                  : "max-h-full w-auto rounded-lg bg-white shadow-float"
+              }
+            />
           ) : (
             <div className="flex h-40 w-40 items-center justify-center rounded-lg bg-white/10">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />

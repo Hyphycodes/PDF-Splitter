@@ -6,7 +6,16 @@ import type { La15Result, TicketGroup } from "@/lib/types";
 import { buildGroupPdf, buildZip, downloadBytes, triggerDownload, safeName } from "@/lib/build";
 import { la15FileName } from "@/lib/la15";
 import PageLightbox from "./PageLightbox";
-import { AlertIcon, ArrowLeftIcon, CheckIcon, DownloadIcon, FileIcon, PageIcon } from "./Icons";
+import {
+  AlertIcon,
+  ArrowLeftIcon,
+  CheckIcon,
+  DownloadIcon,
+  FileIcon,
+  PageIcon,
+  RotateCcwIcon,
+  RotateCwIcon,
+} from "./Icons";
 
 type SaveState = "idle" | "saving" | "saved";
 
@@ -48,6 +57,10 @@ export default function La15ReviewView({
   const pageOf = useMemo(() => new Map(result.pages.map((p) => [p.index, p])), [result.pages]);
   const allPageIndexes = useMemo(() => result.pages.map((p) => p.index), [result.pages]);
   const needsReviewCount = groups.filter((g) => !g.ticketNumber).length;
+  const lightboxGroup = useMemo(
+    () => (lightbox ? groups.find((g) => g.pageIndexes.includes(lightbox.index)) : undefined),
+    [groups, lightbox]
+  );
 
   function setTicket(groupId: string, value: string) {
     setGroups((gs) =>
@@ -63,6 +76,12 @@ export default function La15ReviewView({
 
   function setFilename(groupId: string, filename: string) {
     setGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, filename } : g)));
+  }
+
+  function rotateGroup(groupId: string, delta: -90 | 90) {
+    setGroups((gs) =>
+      gs.map((g) => (g.id === groupId ? { ...g, rotation: (((g.rotation ?? 0) + delta) % 360 + 360) % 360 } : g))
+    );
   }
 
   async function downloadOne(g: TicketGroup) {
@@ -153,20 +172,45 @@ export default function La15ReviewView({
               const needsReview = !g.ticketNumber;
               return (
                 <div key={g.id} className={`card overflow-hidden ${needsReview ? "ring-1 ring-amber-300" : ""}`}>
-                  <button
-                    onClick={() => setLightbox({ index: g.pageIndexes[0] })}
-                    className="block w-full"
-                    title="Click to view full page"
-                  >
-                    {page?.thumbnail && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={page.thumbnail}
-                        alt={`page ${page.pageNumber}`}
-                        className="h-40 w-full border-b border-slate-100 object-cover object-top hover:opacity-90"
-                      />
-                    )}
-                  </button>
+                  <div className="relative h-40 w-full overflow-hidden border-b border-slate-100 bg-slate-50">
+                    <button
+                      onClick={() => setLightbox({ index: g.pageIndexes[0] })}
+                      className="flex h-full w-full items-center justify-center"
+                      title="Click to view full page"
+                    >
+                      {page?.thumbnail && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={page.thumbnail}
+                          alt={`page ${page.pageNumber}`}
+                          style={{ transform: g.rotation ? `rotate(${g.rotation}deg)` : undefined }}
+                          className="max-h-full max-w-full object-contain hover:opacity-90"
+                        />
+                      )}
+                    </button>
+                    <div className="absolute right-1.5 top-1.5 flex gap-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          rotateGroup(g.id, -90);
+                        }}
+                        title="Rotate left"
+                        className="rounded-md bg-white/90 p-1 text-ink-faint shadow-sm hover:bg-white hover:text-ink"
+                      >
+                        <RotateCcwIcon width={13} height={13} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          rotateGroup(g.id, 90);
+                        }}
+                        title="Rotate right"
+                        className="rounded-md bg-white/90 p-1 text-ink-faint shadow-sm hover:bg-white hover:text-ink"
+                      >
+                        <RotateCwIcon width={13} height={13} />
+                      </button>
+                    </div>
+                  </div>
                   <div className="flex items-center justify-between px-3 pt-2 text-[11px] text-ink-faint">
                     <span className="inline-flex items-center gap-1">
                       <PageIcon width={12} height={12} /> Page {page?.pageNumber ?? g.pageIndexes[0] + 1}
@@ -225,16 +269,28 @@ export default function La15ReviewView({
         doc={doc}
         index={lightbox?.index ?? null}
         title={lightbox ? `Page ${lightbox.index + 1}` : undefined}
-        subtitle={
-          lightbox
-            ? groups.find((g) => g.pageIndexes.includes(lightbox.index))?.ticketNumber ?? "No ticket number read"
-            : undefined
-        }
+        subtitle={lightboxGroup?.ticketNumber ?? "No ticket number read"}
         onClose={() => setLightbox(null)}
         onPrev={() => navLightbox(-1)}
         onNext={() => navLightbox(1)}
         hasPrev={lightbox ? allPageIndexes.indexOf(lightbox.index) > 0 : false}
         hasNext={lightbox ? allPageIndexes.indexOf(lightbox.index) < allPageIndexes.length - 1 : false}
+        rotation={lightboxGroup?.rotation ?? 0}
+        actions={
+          lightboxGroup && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-ink-faint">Rotation: {lightboxGroup.rotation}°</span>
+              <div className="flex gap-2">
+                <button className="btn-ghost px-3 py-1.5" onClick={() => rotateGroup(lightboxGroup.id, -90)}>
+                  <RotateCcwIcon width={14} height={14} /> Rotate left
+                </button>
+                <button className="btn-ghost px-3 py-1.5" onClick={() => rotateGroup(lightboxGroup.id, 90)}>
+                  <RotateCwIcon width={14} height={14} /> Rotate right
+                </button>
+              </div>
+            </div>
+          )
+        }
       />
     </div>
   );
