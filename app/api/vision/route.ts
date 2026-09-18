@@ -50,17 +50,39 @@ const TICKET_PROMPT =
   "appears — it may be sideways or upside-down. Find the TICKET NUMBER on this page — it is usually " +
   "labeled 'Ticket No.', 'Ticket #', or 'Ticket Number', stamped or hand-written, and can be digits " +
   "only or a mix of letters, digits, and dashes. Read it exactly as printed, in whatever orientation " +
-  "it appears. Also determine the CLOCKWISE rotation — 0, 90, 180, or 270 degrees — that would need " +
-  "to be applied to THIS IMAGE to make the ticket number (and the rest of the page) upright, reading " +
-  "normally left-to-right. " +
-  'Respond with ONLY JSON: {"ticketNumber":"12345","rotation":0}. If you cannot find a ticket number, ' +
-  '{"ticketNumber":null,"rotation":0}. No commentary.';
+  "it appears.\n\n" +
+  "Also describe the page's current orientation. Do NOT try to compute a rotation angle yourself — " +
+  "just answer this one question: imagine the ticket number read normally, right-side up. In THIS " +
+  "image, as given, which edge of the image is closest to the TOP of that upright text? " +
+  '  - "top" — the page already reads normally, left-to-right, no turning needed.\n' +
+  '  - "right" — the page is turned so the top of the text points toward the right edge of the image.\n' +
+  '  - "bottom" — the page is upside-down; the top of the text points toward the bottom edge.\n' +
+  '  - "left" — the page is turned so the top of the text points toward the left edge of the image.\n' +
+  "If you are at all unsure, answer \"top\" (leave it as-is) rather than guess.\n" +
+  'Respond with ONLY JSON: {"ticketNumber":"12345","textTopEdge":"top"}. If you cannot find a ticket ' +
+  'number, {"ticketNumber":null,"textTopEdge":"top"}. No commentary.';
+
+// Clockwise rotation to add to the page's current orientation so the edge the
+// model named (where the top of the ticket-number text currently points) ends
+// up pointing to the image's own top edge again. Verified against real pdf.js/
+// canvas rendering of test pages (not just algebra) before shipping.
+const EDGE_TO_ROTATION: Record<string, 0 | 90 | 180 | 270> = {
+  top: 0,
+  right: 270,
+  bottom: 180,
+  left: 90,
+};
 
 function normalizeRotation(v: unknown): 0 | 90 | 180 | 270 {
+  const key = typeof v === "string" ? v.trim().toLowerCase() : "";
+  if (key in EDGE_TO_ROTATION) return EDGE_TO_ROTATION[key];
+  // Tolerate a stray numeric answer even though the prompt no longer asks for one.
   const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN;
-  if (!Number.isFinite(n)) return 0;
-  const norm = (((Math.round(n / 90) * 90) % 360) + 360) % 360;
-  return norm === 90 || norm === 180 || norm === 270 ? norm : 0;
+  if (Number.isFinite(n)) {
+    const norm = (((Math.round(n / 90) * 90) % 360) + 360) % 360;
+    if (norm === 90 || norm === 180 || norm === 270) return norm;
+  }
+  return 0;
 }
 
 function extractJson(text: string): Record<string, unknown> | null {
@@ -142,7 +164,7 @@ export async function POST(req: NextRequest) {
     }
     if (mode === "ticket") {
       const ticketNumber = typeof parsed?.ticketNumber === "string" ? parsed.ticketNumber : null;
-      const rotation = normalizeRotation(parsed?.rotation);
+      const rotation = normalizeRotation(parsed?.textTopEdge ?? parsed?.rotation);
       return NextResponse.json({ ticketNumber, rotation });
     }
     const payItems =
