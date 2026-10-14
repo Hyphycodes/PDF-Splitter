@@ -7,6 +7,8 @@ import type { La15Result, TicketGroup, TicketPage } from "./types";
 
 const THUMB_WIDTH = 360;
 const OCR_WIDTH = 1800;
+// Orientation alone needs far less detail than reading a ticket number.
+const ORIENT_WIDTH = 1100;
 
 export interface La15RunOptions {
   /** is an Anthropic key available (server or browser); OCR fallback uses it automatically */
@@ -78,6 +80,15 @@ export async function runLa15Pipeline(
         ticketNumber = data.ticketNumber;
         readMode = "vision";
       }
+    } else if (rotationHint === null && keyAvailable) {
+      // Ticket number came from the text layer, but the glyph heuristic couldn't call the
+      // page's orientation (e.g. an OCR'd scan with little text). Only this orientation
+      // check sends the page image — pages the heuristic is confident about stay local.
+      onProgress?.({ phase: "Straightening pages with Claude", current: p, total: numPages });
+      const image = await renderPage(doc, p, ORIENT_WIDTH);
+      const { data, error } = await ocrTicketNumber(image);
+      if (error) ocrErrors++;
+      else rotation = data.rotation;
     }
 
     pages.push({
@@ -92,7 +103,7 @@ export async function runLa15Pipeline(
     });
   }
 
-  if (ocrErrors > 0) warnings.push(`${ocrErrors} scanned page(s) couldn't be read by Claude.`);
+  if (ocrErrors > 0) warnings.push(`${ocrErrors} page(s) couldn't be checked by Claude (ticket number or orientation).`);
   if (!keyAvailable && pages.some((p) => p.needsReview)) {
     warnings.push("No Anthropic key linked — pages without a text layer couldn't be read for a ticket number.");
   }

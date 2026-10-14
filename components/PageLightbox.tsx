@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { renderPage } from "@/lib/pdf";
 import { CloseIcon, ChevronIcon } from "./Icons";
+import RotatablePage from "./RotatablePage";
 
 interface Props {
   doc: PDFDocumentProxy | null;
@@ -17,6 +18,8 @@ interface Props {
   hasNext?: boolean;
   /** clockwise rotation (0/90/180/270) applied to the rendered preview */
   rotation?: number;
+  /** when set, R / Shift+R rotate the open page right / left */
+  onRotate?: (delta: 90 | -90) => void;
   /** clean action panel rendered under the page (assignment controls) */
   actions?: React.ReactNode;
 }
@@ -32,6 +35,7 @@ export default function PageLightbox({
   hasPrev,
   hasNext,
   rotation = 0,
+  onRotate,
   actions,
 }: Props) {
   const [src, setSrc] = useState<string | null>(null);
@@ -57,18 +61,18 @@ export default function PageLightbox({
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft" && hasPrev) onPrev?.();
       else if (e.key === "ArrowRight" && hasNext) onNext?.();
+      else if ((e.key === "r" || e.key === "R") && onRotate && !(e.target instanceof HTMLInputElement)) {
+        onRotate(e.shiftKey ? -90 : 90);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [index, onClose, onPrev, onNext, hasPrev, hasNext]);
+  }, [index, onClose, onPrev, onNext, onRotate, hasPrev, hasNext]);
 
   if (index === null) return null;
 
-  const rot = ((rotation % 360) + 360) % 360;
-  const swapped = rot === 90 || rot === 270;
-
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-slate-950/80 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex flex-col animate-fade-in bg-slate-950/85 backdrop-blur-md" onClick={onClose}>
       {/* header */}
       <div className="flex items-center justify-between px-4 py-3 text-white" onClick={(e) => e.stopPropagation()}>
         <div className="min-w-0">
@@ -94,21 +98,19 @@ export default function PageLightbox({
             <ChevronIcon width={22} height={22} className="rotate-180" />
           </button>
         )}
-        <div className="flex h-full items-center justify-center overflow-auto py-1" onClick={(e) => e.stopPropagation()}>
+        <div className="h-full w-full max-w-5xl" onClick={(e) => e.stopPropagation()}>
           {src ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <RotatablePage
+              key={index}
               src={src}
               alt={`page ${index + 1}`}
-              style={{ transform: rot ? `rotate(${rot}deg)` : undefined }}
-              className={
-                swapped
-                  ? "max-h-[85vw] max-w-[85vh] rounded-lg bg-white shadow-float"
-                  : "max-h-full w-auto rounded-lg bg-white shadow-float"
-              }
+              rotation={rotation}
+              padding={12}
+              className="h-full w-full"
+              imgClassName="rounded-lg shadow-float"
             />
           ) : (
-            <div className="flex h-40 w-40 items-center justify-center rounded-lg bg-white/10">
+            <div className="flex h-full items-center justify-center">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
             </div>
           )}

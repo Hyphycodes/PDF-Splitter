@@ -6,6 +6,7 @@ import type { La15Result, TicketGroup } from "@/lib/types";
 import { buildGroupPdf, buildZip, downloadBytes, triggerDownload, safeName } from "@/lib/build";
 import { la15FileName } from "@/lib/la15";
 import PageLightbox from "./PageLightbox";
+import RotatablePage from "./RotatablePage";
 import {
   AlertIcon,
   ArrowLeftIcon,
@@ -16,6 +17,9 @@ import {
   RotateCcwIcon,
   RotateCwIcon,
 } from "./Icons";
+
+type Filter = "all" | "review";
+const norm = (deg: number) => (((deg % 360) + 360) % 360);
 
 type SaveState = "idle" | "saving" | "saved";
 
@@ -43,6 +47,8 @@ export default function La15ReviewView({
   const [groups, setGroups] = useState<TicketGroup[]>(result.groups);
   const [building, setBuilding] = useState(false);
   const [lightbox, setLightbox] = useState<{ index: number } | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [cardSize, setCardSize] = useState(230);
 
   // Reset local state when a different LA-15 run is opened.
   useEffect(() => {
@@ -57,6 +63,8 @@ export default function La15ReviewView({
   const pageOf = useMemo(() => new Map(result.pages.map((p) => [p.index, p])), [result.pages]);
   const allPageIndexes = useMemo(() => result.pages.map((p) => p.index), [result.pages]);
   const needsReviewCount = groups.filter((g) => !g.ticketNumber).length;
+  const adjustedCount = groups.filter((g) => norm(g.rotation ?? 0) !== norm(pageOf.get(g.pageIndexes[0])?.rotation ?? 0)).length;
+  const visibleGroups = filter === "review" ? groups.filter((g) => !g.ticketNumber) : groups;
   const lightboxGroup = useMemo(
     () => (lightbox ? groups.find((g) => g.pageIndexes.includes(lightbox.index)) : undefined),
     [groups, lightbox]
@@ -78,10 +86,23 @@ export default function La15ReviewView({
     setGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, filename } : g)));
   }
 
-  function rotateGroup(groupId: string, delta: -90 | 90) {
+  function rotateGroup(groupId: string, delta: -90 | 90 | 180) {
+    setGroups((gs) => gs.map((g) => (g.id === groupId ? { ...g, rotation: norm((g.rotation ?? 0) + delta) } : g)));
+  }
+
+  function rotateAll(delta: -90 | 90 | 180) {
+    setGroups((gs) => gs.map((g) => ({ ...g, rotation: norm((g.rotation ?? 0) + delta) })));
+  }
+
+  /** Back to the orientation detected when the packet was read. */
+  function resetGroup(groupId: string) {
     setGroups((gs) =>
-      gs.map((g) => (g.id === groupId ? { ...g, rotation: (((g.rotation ?? 0) + delta) % 360 + 360) % 360 } : g))
+      gs.map((g) => (g.id === groupId ? { ...g, rotation: pageOf.get(g.pageIndexes[0])?.rotation ?? 0 } : g))
     );
+  }
+
+  function resetAll() {
+    setGroups((gs) => gs.map((g) => ({ ...g, rotation: pageOf.get(g.pageIndexes[0])?.rotation ?? 0 })));
   }
 
   async function downloadOne(g: TicketGroup) {
@@ -119,7 +140,7 @@ export default function La15ReviewView({
   return (
     <div className="flex h-[calc(100vh-57px)] flex-col">
       {/* Sub-header */}
-      <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-5 py-2.5 backdrop-blur">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-white/80 px-5 py-3 backdrop-blur-xl">
         <div className="flex min-w-0 items-center gap-3">
           <button className="btn-ghost shrink-0 px-3 py-2" onClick={onReset}>
             <ArrowLeftIcon width={16} height={16} />
@@ -133,21 +154,19 @@ export default function La15ReviewView({
                   value={projectName}
                   onChange={(e) => onRenameProject(e.target.value)}
                   placeholder="LA15_batch"
-                  className="w-40 rounded-lg border border-slate-200 bg-white px-2 py-1 font-mono text-sm font-semibold text-ink focus:border-brand-400"
+                  className="w-36 rounded-lg border sm:w-44 border-slate-200 bg-white px-2.5 py-1 font-mono text-sm font-semibold text-ink focus:border-brand-400"
                 />
               </label>
               <SaveBadge state={saveState} />
             </div>
-            <div className="mt-0.5 text-[11px] text-ink-faint">
+            <div className="mt-1 text-[11px] text-ink-faint">
               {groups.length} page{groups.length === 1 ? "" : "s"} → {groups.length} file
-              {groups.length === 1 ? "" : "s"}
-              {needsReviewCount > 0 && ` · ${needsReviewCount} need a ticket number`}
-              {" · auto-saved"}
+              {groups.length === 1 ? "" : "s"} · auto-saved
             </div>
           </div>
         </div>
         <button
-          className="btn-primary shrink-0"
+          className="btn-primary shrink-0 shadow-md shadow-brand-600/20"
           disabled={building || groups.length === 0}
           onClick={downloadAllZip}
           title={`Download all ${groups.length} files as ${folderName}.zip`}
@@ -164,94 +183,162 @@ export default function La15ReviewView({
         </div>
       )}
 
+      {/* Toolbar: filter, size, rotate-all */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-200/60 bg-slate-50/70 px-5 py-2.5">
+        <div className="flex items-center gap-1 rounded-xl bg-slate-200/60 p-1">
+          <FilterTab active={filter === "all"} onClick={() => setFilter("all")}>
+            All <span className="tabular-nums opacity-60">{groups.length}</span>
+          </FilterTab>
+          <FilterTab active={filter === "review"} onClick={() => setFilter("review")} warn={needsReviewCount > 0}>
+            Needs ticket <span className="tabular-nums opacity-60">{needsReviewCount}</span>
+          </FilterTab>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="hidden items-center gap-2 text-ink-faint md:flex" title="Preview size">
+            <PageIcon width={12} height={12} />
+            <input
+              type="range"
+              min={170}
+              max={380}
+              step={10}
+              value={cardSize}
+              onChange={(e) => setCardSize(Number(e.target.value))}
+              aria-label="Preview size"
+              className="h-1 w-24 cursor-pointer accent-brand-600"
+            />
+            <PageIcon width={18} height={18} />
+          </div>
+
+          <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+            <span className="px-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Rotate all</span>
+            <ToolButton title="Rotate every page left" onClick={() => rotateAll(-90)} disabled={!groups.length}>
+              <RotateCcwIcon width={15} height={15} />
+            </ToolButton>
+            <ToolButton title="Rotate every page right" onClick={() => rotateAll(90)} disabled={!groups.length}>
+              <RotateCwIcon width={15} height={15} />
+            </ToolButton>
+            <ToolButton title="Flip every page upside-down" onClick={() => rotateAll(180)} disabled={!groups.length}>
+              <span className="px-0.5 text-[11px] font-bold">180°</span>
+            </ToolButton>
+            <span className="mx-0.5 h-5 w-px bg-slate-200" />
+            <button
+              onClick={resetAll}
+              disabled={adjustedCount === 0}
+              title="Put every page back to the orientation detected automatically"
+              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-default disabled:text-ink-faint disabled:opacity-50 disabled:hover:bg-transparent"
+            >
+              Reset to auto{adjustedCount > 0 && ` (${adjustedCount})`}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-5 py-5">
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {groups.map((g) => {
+        <div className="mx-auto max-w-[1600px] px-5 py-6">
+          <div
+            className="grid gap-5"
+            style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))` }}
+          >
+            {visibleGroups.map((g, i) => {
               const page = pageOf.get(g.pageIndexes[0]);
               const needsReview = !g.ticketNumber;
+              const rotation = norm(g.rotation ?? 0);
+              const adjusted = rotation !== norm(page?.rotation ?? 0);
               return (
-                <div key={g.id} className={`card overflow-hidden ${needsReview ? "ring-1 ring-amber-300" : ""}`}>
-                  <div className="relative h-40 w-full overflow-hidden border-b border-slate-100 bg-slate-50">
+                <div
+                  key={g.id}
+                  style={{ animationDelay: `${Math.min(i, 12) * 28}ms` }}
+                  className={`group animate-fade-in overflow-hidden rounded-2xl border bg-white shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-float ${
+                    needsReview ? "border-amber-300 ring-2 ring-amber-100" : "border-slate-200"
+                  }`}
+                >
+                  <div className="relative aspect-[4/5] w-full bg-gradient-to-b from-slate-100 to-slate-200/70">
                     <button
                       onClick={() => setLightbox({ index: g.pageIndexes[0] })}
-                      className="flex h-full w-full items-center justify-center"
+                      className="absolute inset-0 block h-full w-full cursor-zoom-in"
                       title="Click to view full page"
                     >
                       {page?.thumbnail && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
+                        <RotatablePage
                           src={page.thumbnail}
                           alt={`page ${page.pageNumber}`}
-                          style={{ transform: g.rotation ? `rotate(${g.rotation}deg)` : undefined }}
-                          className="max-h-full max-w-full object-contain hover:opacity-90"
+                          rotation={rotation}
+                          padding={12}
+                          className="h-full w-full"
+                          imgClassName="rounded-[3px] shadow-[0_2px_10px_rgba(15,23,42,0.18)]"
                         />
                       )}
                     </button>
-                    <div className="absolute right-1.5 top-1.5 flex gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          rotateGroup(g.id, -90);
-                        }}
-                        title="Rotate left"
-                        className="rounded-md bg-white/90 p-1 text-ink-faint shadow-sm hover:bg-white hover:text-ink"
-                      >
-                        <RotateCcwIcon width={13} height={13} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          rotateGroup(g.id, 90);
-                        }}
-                        title="Rotate right"
-                        className="rounded-md bg-white/90 p-1 text-ink-faint shadow-sm hover:bg-white hover:text-ink"
-                      >
-                        <RotateCwIcon width={13} height={13} />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between px-3 pt-2 text-[11px] text-ink-faint">
-                    <span className="inline-flex items-center gap-1">
-                      <PageIcon width={12} height={12} /> Page {page?.pageNumber ?? g.pageIndexes[0] + 1}
+
+                    <span className="pointer-events-none absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-slate-900/70 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">
+                      <PageIcon width={11} height={11} /> {page?.pageNumber ?? g.pageIndexes[0] + 1}
                     </span>
-                    {needsReview ? (
-                      <span className="inline-flex items-center gap-1 text-amber-700">
-                        <AlertIcon width={11} height={11} /> needs review
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-emerald-600">
-                        <CheckIcon width={11} height={11} /> read
+                    {adjusted && (
+                      <span className="pointer-events-none absolute right-2.5 top-2.5 rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow">
+                        edited
                       </span>
                     )}
+
+                    {/* hover toolbar */}
+                    <div className="absolute inset-x-0 bottom-2.5 flex justify-center opacity-0 transition-all duration-200 group-focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+                      <div className="flex translate-y-1 items-center gap-0.5 rounded-full bg-slate-900/85 p-1 text-white shadow-lg backdrop-blur transition-transform duration-200 group-focus-within:translate-y-0 group-hover:translate-y-0 [@media(hover:none)]:translate-y-0">
+                        <OverlayButton title="Rotate left" onClick={() => rotateGroup(g.id, -90)}>
+                          <RotateCcwIcon width={15} height={15} />
+                        </OverlayButton>
+                        <OverlayButton title="Rotate right" onClick={() => rotateGroup(g.id, 90)}>
+                          <RotateCwIcon width={15} height={15} />
+                        </OverlayButton>
+                        {adjusted && (
+                          <OverlayButton title="Back to auto orientation" onClick={() => resetGroup(g.id)}>
+                            <span className="px-0.5 text-[10px] font-bold">AUTO</span>
+                          </OverlayButton>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="px-3 pb-2 pt-1.5">
-                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-                      Ticket number
-                    </label>
-                    <input
-                      value={g.ticketNumber ?? ""}
-                      onChange={(e) => setTicket(g.id, e.target.value)}
-                      placeholder="—"
-                      className={`w-full rounded-lg border px-2 py-1.5 font-mono text-sm focus:border-brand-400 ${
-                        needsReview ? "border-amber-300 bg-amber-50" : "border-slate-200"
-                      }`}
-                    />
-                  </div>
-                  <div className="flex items-center gap-1.5 border-t border-slate-100 px-3 py-2">
-                    <input
-                      value={g.filename}
-                      onChange={(e) => setFilename(g.id, e.target.value)}
-                      className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-[11px] focus:border-brand-400"
-                    />
-                    <button
-                      onClick={() => downloadOne(g)}
-                      disabled={building}
-                      title="Download this file"
-                      className="shrink-0 rounded-md p-1.5 text-ink-faint hover:bg-slate-100 hover:text-ink"
-                    >
-                      <DownloadIcon width={14} height={14} />
-                    </button>
+
+                  <div className="space-y-2.5 p-3">
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <label className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                          Ticket number
+                        </label>
+                        {needsReview ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700">
+                            <AlertIcon width={11} height={11} /> needs review
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+                            <CheckIcon width={11} height={11} /> read
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        value={g.ticketNumber ?? ""}
+                        onChange={(e) => setTicket(g.id, e.target.value)}
+                        placeholder="Type ticket number"
+                        className={`w-full rounded-xl border px-2.5 py-1.5 font-mono text-sm font-semibold placeholder:font-sans placeholder:font-normal placeholder:text-slate-400 focus:border-brand-400 ${
+                          needsReview ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50 focus:bg-white"
+                        }`}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={g.filename}
+                        onChange={(e) => setFilename(g.id, e.target.value)}
+                        aria-label="File name"
+                        className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-1.5 py-1 font-mono text-[11px] text-ink-faint hover:border-slate-200 focus:border-brand-400 focus:bg-white focus:text-ink"
+                      />
+                      <button
+                        onClick={() => downloadOne(g)}
+                        disabled={building}
+                        title="Download this file"
+                        className="shrink-0 rounded-lg p-1.5 text-ink-faint hover:bg-brand-50 hover:text-brand-700"
+                      >
+                        <DownloadIcon width={15} height={15} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -259,6 +346,11 @@ export default function La15ReviewView({
             {groups.length === 0 && (
               <div className="col-span-full flex items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 py-16 text-sm text-ink-faint">
                 <FileIcon width={16} height={16} /> No pages found in this PDF.
+              </div>
+            )}
+            {groups.length > 0 && visibleGroups.length === 0 && (
+              <div className="col-span-full flex items-center justify-center gap-2 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/50 py-16 text-sm text-emerald-700">
+                <CheckIcon width={16} height={16} /> Every page has a ticket number.
               </div>
             )}
           </div>
@@ -269,23 +361,40 @@ export default function La15ReviewView({
         doc={doc}
         index={lightbox?.index ?? null}
         title={lightbox ? `Page ${lightbox.index + 1}` : undefined}
-        subtitle={lightboxGroup?.ticketNumber ?? "No ticket number read"}
+        subtitle={lightboxGroup?.ticketNumber ? `Ticket ${lightboxGroup.ticketNumber}` : "No ticket number read"}
         onClose={() => setLightbox(null)}
         onPrev={() => navLightbox(-1)}
         onNext={() => navLightbox(1)}
         hasPrev={lightbox ? allPageIndexes.indexOf(lightbox.index) > 0 : false}
         hasNext={lightbox ? allPageIndexes.indexOf(lightbox.index) < allPageIndexes.length - 1 : false}
         rotation={lightboxGroup?.rotation ?? 0}
+        onRotate={lightboxGroup ? (d) => rotateGroup(lightboxGroup.id, d) : undefined}
         actions={
           lightboxGroup && (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-ink-faint">Rotation: {lightboxGroup.rotation}°</span>
-              <div className="flex gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-ink-faint">
+                Rotation <span className="font-mono font-semibold text-ink">{norm(lightboxGroup.rotation)}°</span>
+                <span className="ml-2 hidden sm:inline">
+                  · press <kbd className="rounded bg-slate-100 px-1 font-mono">R</kbd> to turn right,{" "}
+                  <kbd className="rounded bg-slate-100 px-1 font-mono">Shift+R</kbd> left
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 <button className="btn-ghost px-3 py-1.5" onClick={() => rotateGroup(lightboxGroup.id, -90)}>
-                  <RotateCcwIcon width={14} height={14} /> Rotate left
+                  <RotateCcwIcon width={14} height={14} /> Left
                 </button>
                 <button className="btn-ghost px-3 py-1.5" onClick={() => rotateGroup(lightboxGroup.id, 90)}>
-                  <RotateCwIcon width={14} height={14} /> Rotate right
+                  <RotateCwIcon width={14} height={14} /> Right
+                </button>
+                <button className="btn-subtle px-3 py-1.5" onClick={() => resetGroup(lightboxGroup.id)}>
+                  Auto
+                </button>
+                <span className="mx-1 hidden h-8 w-px bg-slate-200 sm:block" />
+                <button className="btn-ghost px-3 py-1.5" onClick={() => rotateAll(-90)} title="Rotate every page left">
+                  <RotateCcwIcon width={14} height={14} /> All
+                </button>
+                <button className="btn-ghost px-3 py-1.5" onClick={() => rotateAll(90)} title="Rotate every page right">
+                  <RotateCwIcon width={14} height={14} /> All
                 </button>
               </div>
             </div>
@@ -293,6 +402,66 @@ export default function La15ReviewView({
         }
       />
     </div>
+  );
+}
+
+function FilterTab({
+  active,
+  warn,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  warn?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-sm font-medium ${
+        active ? "bg-white text-ink shadow-sm" : warn ? "text-amber-700 hover:text-amber-800" : "text-ink-faint hover:text-ink"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ToolButton({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-8 min-w-[2rem] items-center justify-center rounded-lg px-1.5 text-ink-soft hover:bg-brand-50 hover:text-brand-700 active:scale-90 disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+function OverlayButton({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      className="inline-flex h-8 min-w-[2rem] items-center justify-center rounded-full px-1.5 hover:bg-white/20 active:scale-90"
+    >
+      {children}
+    </button>
   );
 }
 
